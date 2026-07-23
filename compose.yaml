@@ -1,0 +1,62 @@
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: attendance
+      POSTGRES_USER: attendance
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORDを設定してください}
+    volumes:
+      - attendance-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U attendance -d attendance"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  backend:
+    build: ./backend
+    environment:
+      DB_URL: jdbc:postgresql://db:5432/attendance
+      DB_USERNAME: attendance
+      DB_PASSWORD: ${DB_PASSWORD:?DB_PASSWORDを設定してください}
+      APP_INITIAL_ADMIN_USERNAME: ${APP_INITIAL_ADMIN_USERNAME:-admin}
+      APP_INITIAL_ADMIN_PASSWORD: ${APP_INITIAL_ADMIN_PASSWORD:?APP_INITIAL_ADMIN_PASSWORDを設定してください}
+      APP_DEMO_SEED_ENABLED: ${APP_DEMO_SEED_ENABLED:-false}
+      APP_DEMO_SEED_PASSWORD: ${APP_DEMO_SEED_PASSWORD:-}
+      APP_DEMO_SEED_COUNT: ${APP_DEMO_SEED_COUNT:-50}
+      APP_DEMO_SEED_MONTHS: ${APP_DEMO_SEED_MONTHS:-6}
+      APP_TEST_USER_ENABLED: ${APP_TEST_USER_ENABLED:-false}
+      APP_TEST_USER_PASSWORD: ${APP_TEST_USER_PASSWORD:-}
+      APP_PUBLIC_BASE_URL: ${APP_PUBLIC_BASE_URL:-}
+      OUTLOOK_INTEGRATION_ENABLED: ${OUTLOOK_INTEGRATION_ENABLED:-false}
+      OUTLOOK_TENANT_ID: ${OUTLOOK_TENANT_ID:-}
+      OUTLOOK_CLIENT_ID: ${OUTLOOK_CLIENT_ID:-}
+      OUTLOOK_CLIENT_SECRET: ${OUTLOOK_CLIENT_SECRET:-}
+      OUTLOOK_SENDER: ${OUTLOOK_SENDER:-}
+      SLACK_INTEGRATION_ENABLED: ${SLACK_INTEGRATION_ENABLED:-false}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://localhost:8080/actuator/health | grep -q UP"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    ports:
+      # 同一LAN上のスマートフォンから確認できるよう、全NICで待ち受ける。
+      # 本番でインターネットへ直接公開せず、社内LANまたはVPN内に限定する。
+      - "4173:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  attendance-db:

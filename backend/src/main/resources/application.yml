@@ -1,0 +1,63 @@
+spring:
+  application:
+    name: attendance
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://localhost:5432/attendance}
+    username: ${DB_USERNAME:attendance}
+    password: ${DB_PASSWORD}
+  flyway:
+    validate-migration-naming: true
+  jackson:
+    time-zone: Asia/Tokyo
+  servlet:
+    multipart:
+      max-file-size: 10MB
+      max-request-size: 10MB
+server:
+  error:
+    include-message: never
+    include-stacktrace: never
+  servlet:
+    session:
+      cookie:
+        name: ATTENDANCE_SESSION
+        http-only: true
+        same-site: strict
+        secure: ${SESSION_COOKIE_SECURE:false}
+      timeout: 30m
+  forward-headers-strategy: framework
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      probes:
+        enabled: true
+app:
+  initial-admin:
+    username: ${APP_INITIAL_ADMIN_USERNAME:admin}
+    password: ${APP_INITIAL_ADMIN_PASSWORD:}
+  demo:
+    seed-enabled: ${APP_DEMO_SEED_ENABLED:false}
+    seed-password: ${APP_DEMO_SEED_PASSWORD:}
+    seed-count: ${APP_DEMO_SEED_COUNT:50}
+    seed-months: ${APP_DEMO_SEED_MONTHS:6}
+  test-user:
+    enabled: ${APP_TEST_USER_ENABLED:false}
+    password: ${APP_TEST_USER_PASSWORD:}
+  integrations:
+    public-base-url: ${APP_PUBLIC_BASE_URL:}
+    outlook:
+      enabled: ${OUTLOOK_INTEGRATION_ENABLED:false}
+      tenant-id: ${OUTLOOK_TENANT_ID:}
+      client-id: ${OUTLOOK_CLIENT_ID:}
+      client-secret: ${OUTLOOK_CLIENT_SECRET:}
+      sender: ${OUTLOOK_SENDER:}
+    slack:
+      enabled: ${SLACK_INTEGRATION_ENABLED:false}
+      webhook-url: ${SLACK_WEBHOOK_URL:}
+logging:
+  level:
+    org.springframework.security: INFO
