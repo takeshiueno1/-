@@ -1,5 +1,7 @@
 package jp.co.query.attendance.auth;
 
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.core.Authentication;
@@ -14,9 +16,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AuthController {
 
     private final JdbcClient jdbc;
+    private final PasswordLifecycleService passwordLifecycle;
 
-    public AuthController(JdbcClient jdbc) {
+    public AuthController(JdbcClient jdbc, PasswordLifecycleService passwordLifecycle) {
         this.jdbc = jdbc;
+        this.passwordLifecycle = passwordLifecycle;
     }
 
     @GetMapping("/session")
@@ -24,7 +28,7 @@ public class AuthController {
         boolean authenticated = authentication != null
                 && authentication.isAuthenticated()
                 && !(authentication instanceof AnonymousAuthenticationToken);
-        boolean mustChangePassword = authenticated && jdbc.sql("""
+        boolean initialPasswordChangeRequired = authenticated && jdbc.sql("""
                         SELECT must_change_password
                           FROM users
                          WHERE username = :username
@@ -33,14 +37,23 @@ public class AuthController {
                 .query(Boolean.class)
                 .optional()
                 .orElse(false);
-        return Map.of(
-                "authenticated", authenticated,
-                "username", authenticated ? authentication.getName() : "",
-                "roles", authenticated
-                        ? authentication.getAuthorities().stream().map(authority -> authority.getAuthority()).sorted().toList()
-                        : java.util.List.of(),
-                "mustChangePassword", mustChangePassword,
-                "csrfToken", csrfToken.getToken(),
-                "csrfHeaderName", csrfToken.getHeaderName());
+        PasswordLifecycleService.Status lifecycle = authenticated
+                ? passwordLifecycle.find(authentication.getName())
+                : null;
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("authenticated", authenticated);
+        result.put("username", authenticated ? authentication.getName() : "");
+        result.put("roles", authenticated
+                ? authentication.getAuthorities().stream().map(authority -> authority.getAuthority()).sorted().toList()
+                : List.of());
+        result.put("mustChangePassword",
+                initialPasswordChangeRequired || lifecycle != null && lifecycle.expired());
+        result.put("passwordExpired", lifecycle != null && lifecycle.expired());
+        result.put("passwordExpiryWarning", lifecycle != null && lifecycle.warning());
+        result.put("passwordExpiryDaysRemaining", lifecycle == null ? null : lifecycle.daysRemaining());
+        result.put("passwordExpiresAt", lifecycle == null ? null : lifecycle.expiresAt());
+        result.put("csrfToken", csrfToken.getToken());
+        result.put("csrfHeaderName", csrfToken.getHeaderName());
+        return result;
     }
 }

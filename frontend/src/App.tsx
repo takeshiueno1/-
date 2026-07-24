@@ -6,6 +6,10 @@ type Session = {
   username: string
   roles: string[]
   mustChangePassword: boolean
+  passwordExpired: boolean
+  passwordExpiryWarning: boolean
+  passwordExpiryDaysRemaining: number | null
+  passwordExpiresAt: string | null
   csrfToken: string
   csrfHeaderName: string
 }
@@ -38,6 +42,11 @@ type DailyEntry = {
   holidayMinutes: number | null
   warnings: string[]
 }
+
+type EntryFieldErrors = Partial<Record<
+  'startTime' | 'endTime' | 'breakTime' | 'weekdayMinutes' | 'workDetail' | 'systemCode' | 'row',
+  string
+>>
 
 type MonthlyTotals = {
   weekdayMinutes: number
@@ -104,6 +113,7 @@ type IntegrationStatus = {
 }
 
 let csrf: Pick<Session, 'csrfToken' | 'csrfHeaderName'> | null = null
+const IDLE_TIMEOUT_MS = 30 * 60 * 1000
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
@@ -143,6 +153,44 @@ function parseBreakTime(value: string): number | null | undefined {
   if (!match) return undefined
   const minutes = Number(match[1]) * 60 + Number(match[2])
   return minutes <= 1440 ? minutes : undefined
+}
+
+function requiredEntryErrors(entry: DailyEntry, breakText: string): EntryFieldErrors {
+  if (entry.dayType !== 'WORKDAY') return {}
+  const errors: EntryFieldErrors = {}
+  if (!entry.startTime?.trim()) errors.startTime = '必須入力'
+  if (!entry.endTime?.trim()) errors.endTime = '必須入力'
+  if (!breakText.trim()) {
+    errors.breakTime = '必須入力'
+  } else if (parseBreakTime(breakText) === undefined) {
+    errors.breakTime = '1:00形式'
+  }
+  if (entry.weekdayMinutes === null) errors.weekdayMinutes = '必須入力'
+  if (!entry.workDetail.trim()) errors.workDetail = '必須入力'
+  if (!entry.systemCode.trim()) errors.systemCode = '必須入力'
+  return errors
+}
+
+function hasText(value: string | null | undefined): boolean {
+  return Boolean(value?.trim())
+}
+
+function hasWgKeyword(entries: DailyEntry[]): boolean {
+  return entries.some((entry) => {
+    const normalized = entry.workDetail.toUpperCase()
+    return normalized.includes('WG') || normalized.includes('ＷＧ')
+  })
+}
+
+function downloadBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.append(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 
 function timeValue(value: string | null): string {
@@ -194,7 +242,7 @@ function dayLabel(dateText: string): string {
   return `${date.getDate()}(${weekdays[date.getDay()]})`
 }
 
-function Login({ onLogin }: { onLogin: (session: Session) => void }) {
+function Login({ onLogin, notice = '' }: { onLogin: (session: Session) => void; notice?: string }) {
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
@@ -239,50 +287,54 @@ function Login({ onLogin }: { onLogin: (session: Session) => void }) {
 
   return (
     <main className="login-page">
-      <section className="login-panel" aria-labelledby="login-title">
-        <div className="brand-mark">勤</div>
-        <p className="eyebrow">社内用</p>
-        <h1 id="login-title">勤怠管理システム</h1>
-        <p className="muted">勤務表を安全に入力・確認します。</p>
-        <form onSubmit={submit} noValidate>
-          <label>
-            ユーザーID
-            <input
-              autoComplete="username"
-              maxLength={50}
-              aria-invalid={Boolean(fieldErrors.username)}
-              aria-describedby={fieldErrors.username ? 'username-error' : undefined}
-              value={username}
-              onChange={(event) => {
-                setUsername(event.target.value)
-                setFieldErrors((current) => ({ ...current, username: undefined }))
-              }}
-            />
-            {fieldErrors.username && <span id="username-error" className="validation-message">{fieldErrors.username}</span>}
-          </label>
-          <label>
-            パスワード
-            <input
-              type="password"
-              autoComplete="current-password"
-              maxLength={128}
-              aria-invalid={Boolean(fieldErrors.password)}
-              aria-describedby={fieldErrors.password ? 'password-error' : undefined}
-              value={password}
-              onChange={(event) => {
-                setPassword(event.target.value)
-                setFieldErrors((current) => ({ ...current, password: undefined }))
-              }}
-            />
-            {fieldErrors.password && <span id="password-error" className="validation-message">{fieldErrors.password}</span>}
-          </label>
-          {error && <p className="error-message" role="alert">{error}</p>}
-          <button className="primary-button" type="submit" disabled={busy}>{busy ? '確認中…' : 'ログイン'}</button>
-          <button className="text-button" type="button" onClick={() => setShowRecovery(true)}>
-            ユーザーID・パスワードをお忘れの方はこちら
-          </button>
-        </form>
-      </section>
+      <div className="login-layout">
+        <header className="login-brand">
+          <img src="/query-logo-header.png" alt="株式会社クエリ" />
+          <h1>勤怠管理システム</h1>
+        </header>
+        <section className="login-panel" aria-labelledby="login-title">
+          <h2 id="login-title">ログイン</h2>
+          {notice && <p className="session-notice" role="status">{notice}</p>}
+          <form onSubmit={submit} noValidate>
+            <label>
+              ユーザーID
+              <input
+                autoComplete="username"
+                maxLength={50}
+                aria-invalid={Boolean(fieldErrors.username)}
+                aria-describedby={fieldErrors.username ? 'username-error' : undefined}
+                value={username}
+                onChange={(event) => {
+                  setUsername(event.target.value)
+                  setFieldErrors((current) => ({ ...current, username: undefined }))
+                }}
+              />
+              {fieldErrors.username && <span id="username-error" className="validation-message">{fieldErrors.username}</span>}
+            </label>
+            <label>
+              パスワード
+              <input
+                type="password"
+                autoComplete="current-password"
+                maxLength={128}
+                aria-invalid={Boolean(fieldErrors.password)}
+                aria-describedby={fieldErrors.password ? 'password-error' : undefined}
+                value={password}
+                onChange={(event) => {
+                  setPassword(event.target.value)
+                  setFieldErrors((current) => ({ ...current, password: undefined }))
+                }}
+              />
+              {fieldErrors.password && <span id="password-error" className="validation-message">{fieldErrors.password}</span>}
+            </label>
+            {error && <p className="error-message" role="alert">{error}</p>}
+            <button className="primary-button" type="submit" disabled={busy}>{busy ? '確認中…' : 'ログイン'}</button>
+            <button className="text-button" type="button" onClick={() => setShowRecovery(true)}>
+              ユーザーID・パスワードをお忘れの方はこちら
+            </button>
+          </form>
+        </section>
+      </div>
     </main>
   )
 }
@@ -321,7 +373,6 @@ function CredentialRecovery({ onBack }: { onBack: () => void }) {
   return (
     <main className="password-page">
       <section className="password-panel" aria-labelledby="recovery-title">
-        <div className="brand-mark">再</div>
         <p className="eyebrow">ACCOUNT RECOVERY</p>
         <h1 id="recovery-title">ログイン情報の再発行依頼</h1>
         <p className="muted">登録情報を確認し、管理者へ依頼を送ります。この画面ではユーザーIDやパスワードを表示しません。</p>
@@ -329,6 +380,13 @@ function CredentialRecovery({ onBack }: { onBack: () => void }) {
           <label>社員コード
             <input maxLength={50} value={employeeCode} onChange={(event) => setEmployeeCode(event.target.value)} />
           </label>
+          <button
+            className="recovery-help-button"
+            type="button"
+            onClick={() => window.alert('社員コードが分からない場合はSlackにて総務にお問い合わせください。')}
+          >
+            社員コードが分からない方
+          </button>
           <label>氏名
             <input maxLength={100} autoComplete="name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} />
           </label>
@@ -346,10 +404,12 @@ function CredentialRecovery({ onBack }: { onBack: () => void }) {
 
 function PasswordChange({
   forced,
+  expired = false,
   onChanged,
   onCancel,
 }: {
   forced: boolean
+  expired?: boolean
   onChanged: (session: Session) => void
   onCancel?: () => void
 }) {
@@ -385,11 +445,12 @@ function PasswordChange({
   return (
     <main className="password-page">
       <section className="password-panel" aria-labelledby="password-title">
-        <div className="brand-mark">鍵</div>
-        <p className="eyebrow">{forced ? '初回ログイン' : 'SECURITY'}</p>
+        <p className="eyebrow">{expired ? 'パスワード有効期限' : forced ? '初回ログイン' : 'SECURITY'}</p>
         <h1 id="password-title">パスワード変更</h1>
         <p className="muted">
-          {forced
+          {expired
+            ? 'パスワードの有効期限が切れています。新しいパスワードへ変更するまで勤怠データにはアクセスできません。'
+            : forced
             ? '管理者が発行した仮パスワードを、ご本人だけが知るパスワードへ変更してください。変更するまで勤怠データにはアクセスできません。'
             : '現在のパスワードを確認してから、新しいパスワードへ更新します。'}
         </p>
@@ -413,6 +474,41 @@ function PasswordChange({
       </section>
     </main>
   )
+}
+
+function PasswordExpiryDialog({
+  session,
+  onClose,
+  onChangePassword,
+}: {
+  session: Session
+  onClose: () => void
+  onChangePassword: () => void
+}) {
+  const expiresAt = session.passwordExpiresAt
+    ? new Intl.DateTimeFormat('ja-JP', {
+      timeZone: 'Asia/Tokyo',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(new Date(session.passwordExpiresAt))
+    : ''
+
+  return <div className="modal-backdrop" role="presentation">
+    <section className="password-expiry-dialog" role="dialog" aria-modal="true" aria-labelledby="password-expiry-title">
+      <p className="eyebrow">PASSWORD EXPIRATION</p>
+      <h2 id="password-expiry-title">パスワードの有効期限</h2>
+      <p>
+        現在のパスワードは<strong>{expiresAt}</strong>まで有効です。
+        残り<strong>{session.passwordExpiryDaysRemaining}日</strong>です。
+      </p>
+      <p className="muted">期限を過ぎると、パスワードを変更するまで勤務表を利用できません。</p>
+      <div className="form-actions">
+        <button type="button" className="secondary-button" onClick={onClose}>後で変更する</button>
+        <button type="button" className="primary-button" onClick={onChangePassword}>今すぐ変更する</button>
+      </div>
+    </section>
+  </div>
 }
 
 function DeleteTimesheetDialog({
@@ -532,15 +628,14 @@ function Initializer({ employee, year, month, apiBase, onCreated }: { employee: 
   )
 }
 
-type AdminSection = 'users' | 'excel' | 'calendar' | 'recovery' | 'integrations'
+type AdminSection = 'users' | 'excel' | 'calendar' | 'recovery'
 
 function AdminMenu({ onSelect }: { onSelect: (section: AdminSection) => void }) {
   const items: Array<{ section: AdminSection; number: string; title: string; description: string }> = [
     { section: 'users', number: '01', title: '利用者管理', description: '社員検索・新規登録・仮パスワード再発行' },
     { section: 'excel', number: '02', title: 'Excel勤務表取込', description: '過去の勤務表を社員ごとにDBへ登録' },
-    { section: 'calendar', number: '03', title: '会社カレンダー', description: '会社独自の休日をPDFから取り込む' },
+    { section: 'calendar', number: '03', title: '会社カレンダーの取込', description: '会社独自の休日をPDFから取り込む' },
     { section: 'recovery', number: '04', title: 'ログイン情報再発行', description: '未処理の再発行依頼を確認する' },
-    { section: 'integrations', number: '05', title: 'Outlook・Slack連携', description: '勤務表共有と社内連絡の設定状況を確認する' },
   ]
 
   return (
@@ -561,39 +656,6 @@ function AdminMenu({ onSelect }: { onSelect: (section: AdminSection) => void }) 
         ))}
       </div>
     </section>
-  )
-}
-
-function IntegrationAdminCard() {
-  const [status, setStatus] = useState<IntegrationStatus | null>(null)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    request<IntegrationStatus>('/api/integrations/status')
-      .then(setStatus)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : '連携状態を確認できませんでした。'))
-  }, [])
-
-  return (
-    <article className="admin-card integration-admin-card">
-      <h2>連携状態</h2>
-      {error && <p className="error-message" role="alert">{error}</p>}
-      {!status
-        ? <p className="muted">設定状態を確認しています。</p>
-        : <div className="integration-status-grid">
-          <section>
-            <div><strong>Outlook</strong><span className={status.outlookConfigured ? 'status-enabled' : 'status-disabled'}>{status.outlookConfigured ? '利用可能' : '未設定'}</span></div>
-            <p>勤務表の月次集計と確認用リンクをMicrosoft Graph経由でメール送信します。</p>
-            <small>必要な環境変数: OUTLOOK_TENANT_ID / OUTLOOK_CLIENT_ID / OUTLOOK_CLIENT_SECRET / OUTLOOK_SENDER</small>
-          </section>
-          <section>
-            <div><strong>Slack</strong><span className={status.slackConfigured ? 'status-enabled' : 'status-disabled'}>{status.slackConfigured ? '利用可能' : '未設定'}</span></div>
-            <p>設定済みのSlackチャンネルへ勤務表に関する連絡を投稿します。</p>
-            <small>必要な環境変数: SLACK_WEBHOOK_URL</small>
-          </section>
-        </div>}
-      <p className="security-note">秘密情報は画面やDBへ保存しません。社内サーバーの環境変数で設定し、設定後にコンテナを再起動してください。</p>
-    </article>
   )
 }
 
@@ -756,9 +818,8 @@ function AdminPanel({
   const sectionDetails: Record<AdminSection, { title: string; description: string }> = {
     users: { title: '利用者管理', description: '社員の検索・登録・アカウント状態を管理します。' },
     excel: { title: 'Excel勤務表取込', description: '過去の勤務表を選択した社員のデータとして登録します。' },
-    calendar: { title: '会社カレンダー', description: '会社独自の休日をPDFから登録します。' },
+    calendar: { title: '会社カレンダーの取込', description: '会社独自の休日をPDFから登録します。' },
     recovery: { title: 'ログイン情報再発行', description: '利用者から届いた再発行依頼を処理します。' },
-    integrations: { title: 'Outlook・Slack連携', description: '勤務表共有と社員連絡の連携状態を確認します。' },
   }
 
   return (
@@ -890,173 +951,305 @@ function AdminPanel({
           </div>)}
         </div>
       </article>}
-      {section === 'integrations' && <IntegrationAdminCard />}
     </section>
   )
 }
 
-function EntryRow({ entry, onSaved, year, month, apiBase }: { entry: DailyEntry; onSaved: (value: Timesheet) => void; year: number; month: number; apiBase: string }) {
-  const [draft, setDraft] = useState(entry)
-  const [breakText, setBreakText] = useState(formatBreakTime(entry.breakMinutes))
-  const [saving, setSaving] = useState(false)
-  const [error, setError] = useState('')
-
-  useEffect(() => {
-    setDraft(entry)
-    setBreakText(formatBreakTime(entry.breakMinutes))
-  }, [entry])
-
-  async function save() {
-    setSaving(true)
-    setError('')
-    const breakMinutes = parseBreakTime(breakText)
-    if (breakMinutes === undefined) {
-      setError('休憩時間は1:00形式')
-      setSaving(false)
-      return
-    }
-    try {
-      const result = await request<Timesheet>(`${apiBase}/${year}/${month}/entries/${entry.workDate}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          startTime: draft.startTime || null,
-          endTime: draft.endTime || null,
-          breakMinutes,
-          leaveType: draft.leaveType || null,
-          workDetail: draft.workDetail,
-          systemCode: draft.systemCode,
-        }),
-      })
-      onSaved(result)
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : '保存できませんでした。')
-    } finally {
-      setSaving(false)
-    }
-  }
-
+function EntryRow({
+  entry,
+  breakText,
+  errors,
+  onChange,
+  onBreakChange,
+}: {
+  entry: DailyEntry
+  breakText: string
+  errors: EntryFieldErrors
+  onChange: (entry: DailyEntry) => void
+  onBreakChange: (value: string) => void
+}) {
   function normalizeDraftTime(field: 'startTime' | 'endTime', value: string) {
     const normalized = normalizeTimeInput(value)
-    setDraft((current) => ({ ...current, [field]: normalized || null }))
+    onChange({ ...entry, [field]: normalized || null })
   }
 
-  const rowClass = draft.dayType === 'WORKDAY' ? '' : draft.dayType.toLowerCase()
+  const rowClass = entry.dayType === 'WORKDAY' ? '' : entry.dayType.toLowerCase()
   return (
     <tr className={rowClass}>
-      <th scope="row" className="date-cell">{dayLabel(draft.workDate)}</th>
-      <td><input aria-label={`${dayLabel(draft.workDate)} 始業`} title="4桁入力できます（例: 1800 → 18:00）" type="text" inputMode="numeric" placeholder="--:--" maxLength={5} value={timeValue(draft.startTime)} onChange={(event) => setDraft({ ...draft, startTime: event.target.value || null })} onBlur={(event) => normalizeDraftTime('startTime', event.target.value)} /></td>
-      <td><input aria-label={`${dayLabel(draft.workDate)} 終業`} title="4桁入力できます（例: 1800 → 18:00）" type="text" inputMode="numeric" placeholder="--:--" maxLength={5} value={timeValue(draft.endTime)} onChange={(event) => setDraft({ ...draft, endTime: event.target.value || null })} onBlur={(event) => normalizeDraftTime('endTime', event.target.value)} /></td>
-      <td><input className="break-input" aria-label={`${dayLabel(draft.workDate)} 休憩時間`} type="text" inputMode="numeric" placeholder="--:--" maxLength={5} value={breakText} onChange={(event) => setBreakText(event.target.value)} onBlur={() => { const parsed = parseBreakTime(breakText); if (parsed !== undefined) setBreakText(formatBreakTime(parsed)) }} /></td>
-      <td className="calculated">{formatMinutes(draft.weekdayMinutes)}</td>
-      <td className="calculated">{formatMinutes(draft.holidayMinutes)}</td>
+      <th scope="row" className="date-cell">
+        {dayLabel(entry.workDate)}
+        {errors.row && <span className="row-error" title={errors.row} aria-label={errors.row}>×</span>}
+      </th>
+      <td><input className={errors.startTime ? 'required-input-error' : ''} aria-invalid={Boolean(errors.startTime)} aria-label={`${dayLabel(entry.workDate)} 始業`} title="4桁入力できます（例: 1800 → 18:00）" type="text" inputMode="numeric" placeholder={errors.startTime ?? '--:--'} maxLength={5} value={timeValue(entry.startTime)} onChange={(event) => onChange({ ...entry, startTime: event.target.value || null })} onBlur={(event) => normalizeDraftTime('startTime', event.target.value)} /></td>
+      <td><input className={errors.endTime ? 'required-input-error' : ''} aria-invalid={Boolean(errors.endTime)} aria-label={`${dayLabel(entry.workDate)} 終業`} title="4桁入力できます（例: 1800 → 18:00）" type="text" inputMode="numeric" placeholder={errors.endTime ?? '--:--'} maxLength={5} value={timeValue(entry.endTime)} onChange={(event) => onChange({ ...entry, endTime: event.target.value || null })} onBlur={(event) => normalizeDraftTime('endTime', event.target.value)} /></td>
+      <td><input className={`break-input ${errors.breakTime ? 'required-input-error' : ''}`} aria-invalid={Boolean(errors.breakTime)} aria-label={`${dayLabel(entry.workDate)} 休憩時間`} type="text" inputMode="numeric" placeholder={errors.breakTime ?? '--:--'} maxLength={7} value={breakText} onChange={(event) => onBreakChange(event.target.value)} onBlur={() => { const parsed = parseBreakTime(breakText); if (parsed !== undefined) onBreakChange(formatBreakTime(parsed)) }} /></td>
+      <td className={`calculated ${errors.weekdayMinutes ? 'required-cell-error' : ''}`}>{errors.weekdayMinutes ?? formatMinutes(entry.weekdayMinutes)}</td>
+      <td className="calculated">{formatMinutes(entry.holidayMinutes)}</td>
       <td>
-        <select aria-label={`${dayLabel(draft.workDate)} 休暇種別`} value={draft.leaveType ?? ''} onChange={(event) => setDraft({ ...draft, leaveType: event.target.value || null })}>
+        <select aria-label={`${dayLabel(entry.workDate)} 休暇種別`} value={entry.leaveType ?? ''} onChange={(event) => onChange({ ...entry, leaveType: event.target.value || null })}>
           <option value="">—</option>
           {['AM半休', 'PM半休', '有給休暇', '特別休暇', '慶弔休暇', '振替休日', '欠勤'].map((value) => <option key={value}>{value}</option>)}
         </select>
       </td>
-      <td><input className="detail-input" aria-label={`${dayLabel(draft.workDate)} 業務内容`} value={draft.workDetail} maxLength={500} onChange={(event) => setDraft({ ...draft, workDetail: event.target.value })} /></td>
-      <td><input className="code-input" aria-label={`${dayLabel(draft.workDate)} システム番号`} value={draft.systemCode} maxLength={50} onChange={(event) => setDraft({ ...draft, systemCode: event.target.value })} /></td>
-      <td className="action-cell">
-        <button className="save-button" onClick={save} disabled={saving}>{saving ? '保存中' : '保存'}</button>
-        {draft.warnings.length > 0 && <span className="warning-dot" title={draft.warnings.join('\n')} aria-label={draft.warnings.join(' ')}>!</span>}
-        {error && <span className="row-error" title={error}>×</span>}
-      </td>
+      <td><input className={`detail-input ${errors.workDetail ? 'required-input-error' : ''}`} aria-invalid={Boolean(errors.workDetail)} aria-label={`${dayLabel(entry.workDate)} 業務内容`} placeholder={errors.workDetail ?? ''} value={entry.workDetail} maxLength={500} onChange={(event) => onChange({ ...entry, workDetail: event.target.value })} /></td>
+      <td><input className={`code-input ${errors.systemCode ? 'required-input-error' : ''}`} aria-invalid={Boolean(errors.systemCode)} aria-label={`${dayLabel(entry.workDate)} システム番号`} placeholder={errors.systemCode ?? ''} value={entry.systemCode} maxLength={50} onChange={(event) => onChange({ ...entry, systemCode: event.target.value })} /></td>
     </tr>
   )
 }
 
-function CommunicationPanel({ value }: { value: Timesheet }) {
-  const [status, setStatus] = useState<IntegrationStatus | null>(null)
-  const [recipient, setRecipient] = useState('')
-  const [slackMessage, setSlackMessage] = useState('')
+function OutlookIcon() {
+  return <svg aria-hidden="true" className="share-app-icon outlook-icon" viewBox="0 0 32 32">
+    <rect width="20" height="28" x="1" y="2" rx="2" fill="#1473e6" />
+    <path d="M16 8h15v18H16z" fill="#2b88d8" />
+    <path d="m16 10 7.5 6L31 10" fill="none" stroke="#fff" strokeWidth="2" />
+    <circle cx="10.5" cy="15.5" r="5.5" fill="#fff" />
+    <circle cx="10.5" cy="15.5" r="3.1" fill="#1473e6" />
+  </svg>
+}
+
+function SlackIcon() {
+  return <svg aria-hidden="true" className="share-app-icon slack-icon" viewBox="0 0 32 32">
+    <rect x="13" y="1" width="6" height="13" rx="3" fill="#36c5f0" />
+    <rect x="18" y="13" width="13" height="6" rx="3" fill="#2eb67d" />
+    <rect x="13" y="18" width="6" height="13" rx="3" fill="#ecb22e" />
+    <rect x="1" y="13" width="13" height="6" rx="3" fill="#e01e5a" />
+    <circle cx="10" cy="10" r="3" fill="#36c5f0" />
+    <circle cx="22" cy="10" r="3" fill="#2eb67d" />
+    <circle cx="22" cy="22" r="3" fill="#ecb22e" />
+    <circle cx="10" cy="22" r="3" fill="#e01e5a" />
+  </svg>
+}
+
+function SidebarCommunication({ value }: { value: Timesheet }) {
+  const [workbook, setWorkbook] = useState<{ blob: Blob; filename: string } | null>(null)
+  const [integrationStatus, setIntegrationStatus] = useState<IntegrationStatus | null>(null)
+  const [loadingWorkbook, setLoadingWorkbook] = useState(false)
   const [busy, setBusy] = useState<'outlook' | 'slack' | null>(null)
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
 
   useEffect(() => {
+    let active = true
+    setLoadingWorkbook(true)
+    setWorkbook(null)
+    fetch(`/api/timesheets/${value.year}/${value.month}/export.xlsx`, { credentials: 'same-origin' })
+      .then(async (response) => {
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({ message: '勤務表を作成できませんでした。' }))
+          throw new Error(body.message ?? '勤務表を作成できませんでした。')
+        }
+        const blob = await response.blob()
+        if (active) {
+          setWorkbook({
+            blob,
+            filename: `勤務表_${value.employee.employeeCode}_${value.year}-${String(value.month).padStart(2, '0')}.xlsx`,
+          })
+        }
+      })
+      .catch((reason) => {
+        if (active) setError(reason instanceof Error ? reason.message : '勤務表を作成できませんでした。')
+      })
+      .finally(() => {
+        if (active) setLoadingWorkbook(false)
+    })
+    return () => { active = false }
+  }, [value])
+
+  useEffect(() => {
     request<IntegrationStatus>('/api/integrations/status')
-      .then(setStatus)
-      .catch((reason) => setError(reason instanceof Error ? reason.message : '連携状態を確認できませんでした。'))
+      .then(setIntegrationStatus)
+      .catch(() => setIntegrationStatus({ outlookConfigured: false, slackConfigured: false }))
   }, [])
 
-  async function sendOutlook(event: React.FormEvent) {
-    event.preventDefault()
-    setBusy('outlook'); setError(''); setNotice('')
+  function downloadWorkbook() {
+    if (!workbook) return
+    downloadBlob(workbook.blob, workbook.filename)
+  }
+
+  async function shareOutlook() {
+    if (!workbook) return
+    setBusy('outlook')
+    setError('')
+    setNotice('')
+    const title = `${value.year}年${value.month}月 勤務表`
     try {
-      await request<void>('/api/integrations/outlook', {
-        method: 'POST',
-        body: JSON.stringify({ recipient, year: value.year, month: value.month }),
-      })
-      setRecipient('')
-      setNotice('Outlookへ勤務表の連絡を送信しました。')
+      const draft = await request<{ token: string }>(
+        `/api/timesheets/${value.year}/${value.month}/outlook-draft`,
+        { method: 'POST' },
+      )
+      const downloadUrl = `${window.location.origin}/api/outlook-drafts/${encodeURIComponent(draft.token)}.eml`
+      window.location.href = `query-attendance-outlook:${encodeURIComponent(downloadUrl)}`
+      setNotice(`${title}を添付したメールをPC版Outlookで開いています。宛先を確認して送信してください。`)
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Outlookへ送信できませんでした。')
+      setError(reason instanceof Error ? reason.message : 'Outlook送信用メールを作成できませんでした。')
     } finally {
       setBusy(null)
     }
   }
 
-  async function sendSlack(event: React.FormEvent) {
-    event.preventDefault()
-    setBusy('slack'); setError(''); setNotice('')
+  async function openSlack() {
+    setBusy('slack')
+    setError('')
+    setNotice('')
     try {
-      await request<void>('/api/integrations/slack', {
-        method: 'POST',
-        body: JSON.stringify({ message: slackMessage, year: value.year, month: value.month }),
-      })
-      setSlackMessage('')
-      setNotice('Slackへ勤務表の連絡を投稿しました。')
+      if (integrationStatus?.slackConfigured) {
+        await request<void>('/api/integrations/slack', {
+          method: 'POST',
+          body: JSON.stringify({
+            message: '勤務表を確認してください。',
+            year: value.year,
+            month: value.month,
+          }),
+        })
+        setNotice('連携済みのSlackチャンネルへ連絡を投稿しました。')
+      } else {
+        window.open('https://app.slack.com/client', '_blank', 'noopener,noreferrer')
+        setNotice('Slack連携は未設定です。Slackを開きました。Webhook設定後は、この画面から直接投稿できます。')
+      }
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : 'Slackへ投稿できませんでした。')
+      setError(reason instanceof Error ? reason.message : 'Slackへ連絡できませんでした。')
     } finally {
       setBusy(null)
     }
   }
 
   return (
-    <details className="communication-panel">
-      <summary>Outlook・Slackで共有</summary>
+    <section className="sidebar-communication" aria-label="Outlook・Slack連絡">
+      <h2>連絡</h2>
       {error && <p className="error-message" role="alert">{error}</p>}
       {notice && <p className="success-message" role="status">{notice}</p>}
-      <div className="communication-grid">
-        <form onSubmit={sendOutlook}>
-          <div className="integration-heading">
-            <strong>Outlook</strong>
-            <span className={status?.outlookConfigured ? 'status-enabled' : 'status-disabled'}>{status?.outlookConfigured ? '利用可能' : '未設定'}</span>
-          </div>
-          <p>月次集計と確認用リンクをメールで送ります。</p>
-          <label>送信先メールアドレス
-            <input type="email" autoComplete="off" required maxLength={254} value={recipient} onChange={(event) => setRecipient(event.target.value)} placeholder="recipient@example.co.jp" />
-          </label>
-          <button className="primary-button" type="submit" disabled={!status?.outlookConfigured || busy !== null}>{busy === 'outlook' ? '送信中…' : 'Outlookへ送信'}</button>
-        </form>
-        <form onSubmit={sendSlack}>
-          <div className="integration-heading">
-            <strong>Slack</strong>
-            <span className={status?.slackConfigured ? 'status-enabled' : 'status-disabled'}>{status?.slackConfigured ? '利用可能' : '未設定'}</span>
-          </div>
-          <p>設定済みの社内チャンネルへ連絡します。</p>
-          <label>メッセージ（任意）
-            <input type="text" autoComplete="off" maxLength={500} value={slackMessage} onChange={(event) => setSlackMessage(event.target.value)} placeholder="確認をお願いします" />
-          </label>
-          <button className="primary-button" type="submit" disabled={!status?.slackConfigured || busy !== null}>{busy === 'slack' ? '投稿中…' : 'Slackへ投稿'}</button>
-        </form>
+      <div className="sidebar-file-reference">
+        <span>Outlook添付ファイル</span>
+        <strong>{loadingWorkbook ? '準備中…' : workbook?.filename ?? '取得できません'}</strong>
+        <button type="button" disabled={!workbook || loadingWorkbook} onClick={downloadWorkbook}>
+          ファイルを確認
+        </button>
       </div>
-    </details>
+      <button className="sidebar-contact-button outlook-contact-button" type="button" disabled={loadingWorkbook || !workbook || busy !== null} onClick={shareOutlook}>
+        <OutlookIcon />{busy === 'outlook' ? '作成中…' : 'Outlookで送る'}
+      </button>
+      <button className="sidebar-contact-button slack-contact-button" type="button" disabled={busy !== null} onClick={() => void openSlack()}>
+        <SlackIcon />{busy === 'slack' ? '連絡中…' : 'Slackで連絡'}
+      </button>
+      {integrationStatus && <small className="integration-state">
+        PC版Outlook: Windows連携を使用<br />
+        Slack連携: {integrationStatus.slackConfigured ? '設定済み' : '未設定'}
+      </small>}
+    </section>
   )
 }
 
 function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase: string; onChange: (value: Timesheet) => void }) {
   const [wgBusy, setWgBusy] = useState(false)
+  const [draftEntries, setDraftEntries] = useState(value.entries)
+  const [breakTexts, setBreakTexts] = useState<Record<string, string>>(
+    Object.fromEntries(value.entries.map((entry) => [entry.workDate, formatBreakTime(entry.breakMinutes)])),
+  )
+  const [savingEntries, setSavingEntries] = useState(false)
+  const [saveNotice, setSaveNotice] = useState('')
+  const [entryErrors, setEntryErrors] = useState<Record<string, EntryFieldErrors>>({})
 
-  async function updateWg(value: string) {
+  function updateDraft(updated: DailyEntry) {
+    setDraftEntries((current) => current.map((entry) => entry.workDate === updated.workDate ? updated : entry))
+    setSaveNotice('')
+    setEntryErrors((current) => {
+      if (!current[updated.workDate]) return current
+      const next = { ...current }
+      delete next[updated.workDate]
+      return next
+    })
+  }
+
+  function entryChanged(draft: DailyEntry, original: DailyEntry, breakMinutes: number | null) {
+    return draft.startTime !== original.startTime
+      || draft.endTime !== original.endTime
+      || breakMinutes !== original.breakMinutes
+      || draft.leaveType !== original.leaveType
+      || draft.workDetail !== original.workDetail
+      || draft.systemCode !== original.systemCode
+  }
+
+  async function saveAllEntries() {
+    setSaveNotice('')
+    const missingIdentity = [
+      value.employee.department,
+      value.employee.displayName,
+      value.employee.positionName,
+      value.employee.employeeCode,
+      value.pmarkConfirmationDate,
+      value.wgParticipation,
+    ].some((field) => !hasText(field))
+    if (missingIdentity) {
+      setSaveNotice('所属・氏名・役職・コード・Pマーク・WGは必須です。未入力項目を確認してください。')
+      return
+    }
+    if (value.wgParticipation === '参加' && !hasWgKeyword(draftEntries)) {
+      window.alert('WGの開催日時を業務欄に記載してください。')
+    }
+
+    const validationErrors: Record<string, EntryFieldErrors> = {}
+    const changedEntries = draftEntries.flatMap((draft) => {
+      const errors = requiredEntryErrors(draft, breakTexts[draft.workDate] ?? '')
+      const blockingErrors = Object.entries(errors).filter(([field]) => field !== 'weekdayMinutes')
+      if (blockingErrors.length > 0) {
+        validationErrors[draft.workDate] = errors
+        return []
+      }
+      const breakMinutes = parseBreakTime(breakTexts[draft.workDate] ?? '')
+      if (breakMinutes === undefined) return []
+      const original = value.entries.find((entry) => entry.workDate === draft.workDate)
+      return original && entryChanged(draft, original, breakMinutes) ? [{ draft, breakMinutes }] : []
+    })
+    if (Object.keys(validationErrors).length > 0) {
+      setEntryErrors(validationErrors)
+      setSaveNotice('入力内容を確認してください。')
+      return
+    }
+    if (changedEntries.length === 0) {
+      setEntryErrors({})
+      setSaveNotice('保存する変更はありません。')
+      return
+    }
+
+    setSavingEntries(true)
+    setEntryErrors({})
+    try {
+      let latest = value
+      for (const { draft, breakMinutes } of changedEntries) {
+        latest = await request<Timesheet>(`${apiBase}/${value.year}/${value.month}/entries/${draft.workDate}`, {
+          method: 'PUT',
+          body: JSON.stringify({
+            startTime: draft.startTime || null,
+            endTime: draft.endTime || null,
+            breakMinutes,
+            leaveType: draft.leaveType || null,
+            workDetail: draft.workDetail,
+            systemCode: draft.systemCode,
+          }),
+        })
+      }
+      setDraftEntries(latest.entries)
+      setBreakTexts(Object.fromEntries(latest.entries.map((entry) => [entry.workDate, formatBreakTime(entry.breakMinutes)])))
+      setSaveNotice(`${changedEntries.length}件の変更を保存しました。`)
+      onChange(latest)
+    } catch (reason) {
+      setSaveNotice(reason instanceof Error ? reason.message : '変更を保存できませんでした。')
+    } finally {
+      setSavingEntries(false)
+    }
+  }
+
+  async function updateWg(nextValue: string) {
     setWgBusy(true)
     try {
-      onChange(await request<Timesheet>(`${apiBase}/${valueYear}/${valueMonth}/wg-participation`, {
+      const updated = await request<Timesheet>(`${apiBase}/${valueYear}/${valueMonth}/wg-participation`, {
         method: 'PUT',
-        body: JSON.stringify({ value: value || null }),
-      }))
+        body: JSON.stringify({ value: nextValue || null }),
+      })
+      onChange(updated)
+      if (nextValue === '参加' && !hasWgKeyword(draftEntries)) {
+        window.alert('WGの開催日時を業務欄に記載してください。')
+      }
     } finally {
       setWgBusy(false)
     }
@@ -1083,11 +1276,16 @@ function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase
         <strong>{value.year}年{String(value.month).padStart(2, '0')}月分</strong>
       </section>
       <section className="identity-grid">
-        <dl><dt>所属</dt><dd>{value.employee.department || '—'}</dd><dt>氏名</dt><dd>{value.employee.displayName}</dd></dl>
-        <dl><dt>役職</dt><dd>{value.employee.positionName || '—'}</dd><dt>コード</dt><dd>{value.employee.employeeCode}</dd></dl>
-        <dl><dt>Pマーク運用確認日</dt><dd>{value.pmarkConfirmationDate}</dd><dt>WG参加可否</dt><dd><select disabled={wgBusy} value={value.wgParticipation ?? ''} onChange={(event) => updateWg(event.target.value)}><option value="">未選択</option><option>参加</option><option>不参加</option><option>当月未開催</option></select></dd></dl>
+        <dl><dt>所属</dt><dd className={!hasText(value.employee.department) ? 'required-value-error' : ''}>{value.employee.department || '必須入力'}</dd><dt>氏名</dt><dd className={!hasText(value.employee.displayName) ? 'required-value-error' : ''}>{value.employee.displayName || '必須入力'}</dd></dl>
+        <dl><dt>役職</dt><dd className={!hasText(value.employee.positionName) ? 'required-value-error' : ''}>{value.employee.positionName || '必須入力'}</dd><dt>コード</dt><dd className={!hasText(value.employee.employeeCode) ? 'required-value-error' : ''}>{value.employee.employeeCode || '必須入力'}</dd></dl>
+        <dl><dt>Pマーク運用確認日</dt><dd className={!hasText(value.pmarkConfirmationDate) ? 'required-value-error' : ''}>{value.pmarkConfirmationDate || '必須入力'}</dd><dt>WG参加可否</dt><dd className={`wg-select-cell ${!hasText(value.wgParticipation) ? 'required-value-error' : ''}`}><select className={!hasText(value.wgParticipation) ? 'required-input-error' : ''} aria-invalid={!hasText(value.wgParticipation)} aria-label="WG参加可否" disabled={wgBusy} value={value.wgParticipation ?? ''} onChange={(event) => updateWg(event.target.value)}><option value="" disabled>必須選択</option><option>参加</option><option>不参加</option><option>当月未開催</option></select></dd></dl>
       </section>
-      {apiBase === '/api/timesheets' && <CommunicationPanel value={value} />}
+      <section className="sheet-save-toolbar" aria-live="polite">
+        {saveNotice && <span>{saveNotice}</span>}
+        <button className="primary-button" type="button" disabled={savingEntries} onClick={saveAllEntries}>
+          {savingEntries ? '保存中…' : '変更をまとめて保存'}
+        </button>
+      </section>
       <section className="table-card">
         <div className="table-scroll">
           <table className="attendance-table">
@@ -1099,13 +1297,22 @@ function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase
                 <th rowSpan={2}>休暇種別</th>
                 <th rowSpan={2}>業務内容</th>
                 <th rowSpan={2}>システムNo.</th>
-                <th className="utility-column" rowSpan={2}>保存</th>
               </tr>
               <tr><th>始業</th><th>終業</th><th>休憩</th><th>平日</th><th>休日</th></tr>
             </thead>
-            <tbody>{value.entries.map((entry) => <EntryRow key={entry.id} entry={entry} year={value.year} month={value.month} apiBase={apiBase} onSaved={onChange} />)}</tbody>
+            <tbody>{draftEntries.map((entry) => <EntryRow
+              key={entry.id}
+              entry={entry}
+              breakText={breakTexts[entry.workDate] ?? ''}
+              errors={{ ...requiredEntryErrors(entry, breakTexts[entry.workDate] ?? ''), ...entryErrors[entry.workDate] }}
+              onChange={updateDraft}
+              onBreakChange={(next) => {
+                setBreakTexts((current) => ({ ...current, [entry.workDate]: next }))
+                setSaveNotice('')
+              }}
+            />)}</tbody>
             <tfoot>
-              <tr><th colSpan={4}>計</th><td>{formatMinutes(value.totals.weekdayMinutes)}</td><td>{formatMinutes(value.totals.holidayMinutes)}</td><td colSpan={4}></td></tr>
+              <tr><th colSpan={4}>計</th><td>{formatMinutes(value.totals.weekdayMinutes)}</td><td>{formatMinutes(value.totals.holidayMinutes)}</td><td colSpan={3}></td></tr>
             </tfoot>
           </table>
         </div>
@@ -1148,121 +1355,34 @@ function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase
   )
 }
 
-function OwnExcelImport({
-  onImported,
-  onCancel,
-}: {
-  onImported: (result: ExcelImportResult) => void
-  onCancel: () => void
-}) {
-  const [file, setFile] = useState<File | null>(null)
-  const [password, setPassword] = useState('')
-  const [error, setError] = useState('')
-  const [busy, setBusy] = useState(false)
-
-  async function importExcel(overwrite = false) {
-    if (!file) {
-      setError('過去の勤務表Excelを選択してください。')
-      return
-    }
-    setBusy(true)
-    setError('')
-    try {
-      const body = new FormData()
-      body.append('file', file)
-      body.append('password', password)
-      body.append('overwrite', String(overwrite))
-      const result = await request<ExcelImportResult>('/api/excel-timesheets', {
-        method: 'POST',
-        body,
-      })
-      onImported(result)
-    } catch (reason) {
-      const typed = reason as Error & { status?: number }
-      if (typed.status === 409 && !overwrite
-        && window.confirm('同じ月の勤務表が登録されています。Excelの内容で上書きしますか？')) {
-        await importExcel(true)
-      } else {
-        setError(typed.message || 'Excel勤務表を取り込めませんでした。')
-      }
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  return (
-    <section className="import-page">
-      <div className="section-title">
-        <p className="eyebrow">PAST DATA</p>
-        <h1>過去のExcel勤務表を取り込む</h1>
-        <p className="muted">自分の勤務表をDBへ登録し、登録後すぐにこのアプリ上で参照・編集できます。</p>
-      </div>
-      <article className="admin-card featured-admin-card">
-        <h2>Excelファイルを選択</h2>
-        <p className="muted">対応形式は提供済み勤務表と同じ .xlsx / .xlsm、上限10MBです。ファイル本体とパスワードは保存しません。</p>
-        <form className="own-import-form" onSubmit={(event) => { event.preventDefault(); void importExcel() }}>
-          <label>過去の勤務表Excel
-            <input
-              type="file"
-              accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12"
-              onChange={(event) => setFile(event.target.files?.[0] ?? null)}
-            />
-          </label>
-          <label>Excelパスワード
-            <input type="password" maxLength={128} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="パスワードなしの場合は空欄" />
-          </label>
-          {error && <p className="error-message" role="alert">{error}</p>}
-          <div className="form-actions">
-            <button className="secondary-button" type="button" onClick={onCancel}>キャンセル</button>
-            <button className="primary-button" type="submit" disabled={busy}>{busy ? '解析・登録中…' : 'Excelを解析して登録'}</button>
-          </div>
-        </form>
-      </article>
-    </section>
-  )
-}
-
 function WorkspaceHome({
   employee,
-  historyCount,
   isAdmin,
   onNew,
   onHistory,
-  onImport,
   onAdmin,
 }: {
   employee: Employee
-  historyCount: number
   isAdmin: boolean
   onNew: () => void
   onHistory: () => void
-  onImport: () => void
   onAdmin: () => void
 }) {
   return (
     <section className="workspace-home">
       <div className="home-intro">
-        <p className="eyebrow">WORK MENU</p>
-        <h1>{employee.displayName}さん、勤務表の操作を選択してください</h1>
-        <p>新しい月の勤務表を作成するか、登録済みの過去データを参照・編集します。</p>
+        <p className="eyebrow">ホーム</p>
+        <h1>{employee.displayName}さん　お疲れ様です。</h1>
       </div>
       <div className="work-choice-grid">
         <button className="work-choice primary-choice" onClick={onNew}>
           <span className="choice-number">01</span>
           <strong>新規で勤務表を作成</strong>
-          <small>今月の勤務表を作成・入力します</small>
           <span className="choice-arrow">→</span>
         </button>
         <button className="work-choice" onClick={onHistory}>
           <span className="choice-number">02</span>
           <strong>過去分を参照・編集</strong>
-          <small>登録済み {historyCount}か月分から選択します</small>
-          <span className="choice-arrow">→</span>
-        </button>
-        <button className="work-choice import-choice" onClick={onImport}>
-          <span className="choice-number">03</span>
-          <strong>過去のExcelを取り込む</strong>
-          <small>以前の勤務表をDBへ登録して反映します</small>
           <span className="choice-arrow">→</span>
         </button>
         {isAdmin && <button className="work-choice admin-choice" onClick={onAdmin}>
@@ -1277,8 +1397,8 @@ function WorkspaceHome({
 }
 
 function App() {
-  type Screen = 'home' | 'new' | 'history' | 'import' | 'admin-menu'
-    | 'admin-users' | 'admin-excel' | 'admin-calendar' | 'admin-recovery' | 'admin-integrations' | 'password'
+  type Screen = 'home' | 'new' | 'history' | 'admin-menu'
+    | 'admin-users' | 'admin-excel' | 'admin-calendar' | 'admin-recovery' | 'password'
   const today = useMemo(() => new Date(), [])
   const [session, setSession] = useState<Session | null>(null)
   const [employee, setEmployee] = useState<Employee | null>(null)
@@ -1294,8 +1414,11 @@ function App() {
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [importNotice, setImportNotice] = useState<ExcelImportResult | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Timesheet | null>(null)
+  const [loginNotice, setLoginNotice] = useState('')
+  const [dismissedPasswordExpiry, setDismissedPasswordExpiry] = useState('')
 
   const isAdmin = session?.roles.includes('ROLE_ADMIN') ?? false
+  const hasElevatedRole = session?.roles.some((role) => role !== 'ROLE_USER') ?? false
   const targetUsername = selectedUsername || session?.username || ''
   const targetEmployee = targetUsername === session?.username
     ? employee
@@ -1330,12 +1453,84 @@ function App() {
     }
   }, [isAdmin, targetUsername])
 
+  const returnToLogin = useCallback((next: Session, notice = '') => {
+    csrf = next
+    setSession(next)
+    setEmployee(null)
+    setTimesheet(null)
+    setHistory([])
+    setEditableEmployees([])
+    setSelectedUsername('')
+    setEmployeeSearch('')
+    setImportNotice(null)
+    setDeleteTarget(null)
+    setLoginNotice(notice)
+    setScreen('home')
+  }, [])
+
   useEffect(() => {
     request<Session>('/api/auth/session').then((value) => {
       csrf = value
       setSession(value)
     }).catch((reason) => setError(String(reason)))
   }, [])
+
+  useEffect(() => {
+    if (!session?.authenticated) return
+    let idleTimer = 0
+    let lastActivityAt = Date.now()
+    let expiring = false
+
+    const expireSession = async () => {
+      if (expiring) return
+      expiring = true
+      try {
+        await request<void>('/api/auth/logout', { method: 'POST' })
+      } catch {
+        // サーバー側で先にセッションが失効していても、画面は必ずログインへ戻す。
+      }
+      const next = await request<Session>('/api/auth/session').catch(() => ({
+        authenticated: false,
+        username: '',
+        roles: [],
+        mustChangePassword: false,
+        passwordExpired: false,
+        passwordExpiryWarning: false,
+        passwordExpiryDaysRemaining: null,
+        passwordExpiresAt: null,
+        csrfToken: '',
+        csrfHeaderName: 'X-XSRF-TOKEN',
+      }))
+      returnToLogin(next, '30分間操作がなかったためログアウトしました。再ログインしてください。')
+    }
+
+    const scheduleExpiry = () => {
+      window.clearTimeout(idleTimer)
+      const remaining = IDLE_TIMEOUT_MS - (Date.now() - lastActivityAt)
+      if (remaining <= 0) {
+        void expireSession()
+        return
+      }
+      idleTimer = window.setTimeout(() => { void expireSession() }, remaining)
+    }
+    const recordActivity = () => {
+      lastActivityAt = Date.now()
+      scheduleExpiry()
+    }
+    const checkWhenVisible = () => {
+      if (document.visibilityState === 'visible') scheduleExpiry()
+    }
+
+    const activityEvents: Array<keyof WindowEventMap> = ['pointerdown', 'keydown', 'touchstart', 'scroll']
+    activityEvents.forEach((eventName) => window.addEventListener(eventName, recordActivity, { passive: true }))
+    document.addEventListener('visibilitychange', checkWhenVisible)
+    scheduleExpiry()
+    return () => {
+      window.clearTimeout(idleTimer)
+      activityEvents.forEach((eventName) => window.removeEventListener(eventName, recordActivity))
+      document.removeEventListener('visibilitychange', checkWhenVisible)
+    }
+  }, [session?.authenticated, returnToLogin])
 
   useEffect(() => {
     if (!session?.authenticated || session.mustChangePassword) return
@@ -1428,53 +1623,52 @@ function App() {
   async function logout() {
     await request<void>('/api/auth/logout', { method: 'POST' })
     const next = await request<Session>('/api/auth/session')
-    csrf = next
-    setSession(next)
-    setEmployee(null)
-    setTimesheet(null)
-    setHistory([])
-    setEditableEmployees([])
-    setSelectedUsername('')
-    setEmployeeSearch('')
-    setImportNotice(null)
-    setDeleteTarget(null)
-    setScreen('home')
+    returnToLogin(next)
   }
 
   if (error && !session) return <main className="center-message"><p className="error-message">{error}</p></main>
   if (!session) return <main className="center-message">読み込み中…</main>
-  if (!session.authenticated) return <Login onLogin={setSession} />
-  if (session.mustChangePassword) return <PasswordChange forced onChanged={(next) => { setSession(next); setScreen('home') }} />
+  if (!session.authenticated) return <Login notice={loginNotice} onLogin={(next) => { setLoginNotice(''); setSession(next) }} />
+  if (session.mustChangePassword) return <PasswordChange forced expired={session.passwordExpired} onChanged={(next) => { setSession(next); setScreen('home') }} />
   if (!employee) return <main className="center-message">従業員情報を読み込み中…</main>
   if (screen === 'password') return <PasswordChange forced={false} onChanged={(next) => { setSession(next); setScreen('home') }} onCancel={() => setScreen('home')} />
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${hasElevatedRole ? 'privileged-theme' : ''}`}>
       <header className="app-header">
         <div className="header-brand">
           <img className="company-logo" src="/query-logo-header.png" alt="株式会社クエリ" />
           <strong>勤怠管理システム</strong>
-          <span className="internal-badge">社内用</span>
         </div>
-        <div className="header-actions">
-          <nav>
-            <button onClick={() => { setScreen('home'); setError('') }}>ホーム</button>
-            {isAdmin && <button onClick={() => { setScreen('admin-menu'); setError('') }}>管理者メニュー</button>}
-            <button onClick={() => { setScreen('password'); setError('') }}>パスワード変更</button>
-            {(screen === 'new' || screen === 'history') && <button onClick={() => window.print()}>印刷</button>}
-            <button onClick={logout}>ログアウト</button>
-          </nav>
-          <div className="current-user">
-            <span>ログイン中</span>
-            <strong>{employee.displayName}</strong>
-            <small>ユーザーID: {session.username}・{employee.employeeCode}{employee.department ? `・${employee.department}` : ''}</small>
-          </div>
+        <div className={`current-user ${hasElevatedRole ? 'elevated-current-user' : ''}`}>
+          <span>ログイン中</span>
+          {hasElevatedRole
+            ? <strong>ユーザーID: {session.username}</strong>
+            : <>
+              <strong>{employee.displayName}</strong>
+              <small>
+                ユーザーID: {session.username}・{employee.employeeCode}
+                {employee.department ? `・${employee.department}` : ''}
+                {employee.positionName ? `・${employee.positionName}` : ''}
+              </small>
+            </>}
         </div>
       </header>
-      <main className="content">
+      <div className="app-body">
+        <aside className="app-sidebar">
+          <nav className="side-nav" aria-label="メインメニュー">
+            <button className={screen === 'home' ? 'active' : ''} onClick={() => { setScreen('home'); setError('') }}><span>⌂</span>ホーム</button>
+            {isAdmin && <button className={`admin-nav-button ${screen.startsWith('admin') ? 'active' : ''}`} onClick={() => { setScreen('admin-menu'); setError('') }}><span>◆</span>管理者メニュー</button>}
+            <button onClick={() => { setScreen('password'); setError('') }}><span>●</span>パスワード変更</button>
+            {(screen === 'new' || screen === 'history') && <button onClick={() => window.print()}><span>▣</span>印刷</button>}
+            <button onClick={logout}><span>↪</span>ログアウト</button>
+          </nav>
+          {(screen === 'new' || screen === 'history') && timesheet && targetUsername === session.username
+            && <SidebarCommunication key={`${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} />}
+        </aside>
+        <main className="content">
         {screen === 'home' && <WorkspaceHome
           employee={employee}
-          historyCount={history.length}
           isAdmin={isAdmin}
           onNew={() => {
             setYear(today.getFullYear())
@@ -1495,11 +1689,6 @@ function App() {
             setScreen('history')
             setError(latest ? '' : '登録済みの勤務表がありません。')
           }}
-          onImport={() => {
-            setImportNotice(null)
-            setScreen('import')
-            setError('')
-          }}
           onAdmin={() => { setScreen('admin-menu'); setError('') }}
         />}
         {screen === 'admin-menu' && <AdminMenu onSelect={openAdminSection} />}
@@ -1507,19 +1696,6 @@ function App() {
         {screen === 'admin-excel' && <AdminPanel currentUsername={session.username} section="excel" onBack={() => setScreen('admin-menu')} />}
         {screen === 'admin-calendar' && <AdminPanel currentUsername={session.username} section="calendar" onBack={() => setScreen('admin-menu')} />}
         {screen === 'admin-recovery' && <AdminPanel currentUsername={session.username} section="recovery" onBack={() => setScreen('admin-menu')} />}
-        {screen === 'admin-integrations' && <AdminPanel currentUsername={session.username} section="integrations" onBack={() => setScreen('admin-menu')} />}
-        {screen === 'import' && <OwnExcelImport
-          onCancel={() => setScreen('home')}
-          onImported={(result) => {
-            setImportNotice(result)
-            setYear(result.year)
-            setMonth(result.month)
-            setTimesheet(result.timesheet)
-            setNotFound(false)
-            rememberMonth(result.timesheet)
-            setScreen('history')
-          }}
-        />}
         {(screen === 'new' || screen === 'history') && <>
           <div className="month-toolbar">
             {isAdmin && <label className="employee-picker">
@@ -1575,9 +1751,21 @@ function App() {
           {targetUsername !== session.username && <p className="delegated-edit-note">管理者権限で <strong>{targetEmployee?.displayName}</strong> さんの勤務表を参照・編集しています。操作は監査ログに記録されます。</p>}
           {notFound && screen === 'history' && <section className="empty-state"><h2>勤務表がありません</h2><p className="muted">「過去の勤怠」から登録済みの月を選択してください。</p></section>}
           {notFound && screen === 'new' && targetEmployee && <Initializer employee={targetEmployee} year={year} month={month} apiBase={timesheetApiBase} onCreated={(value) => { setTimesheet(value); setNotFound(false); rememberMonth(value) }} />}
-          {timesheet && <TimesheetView value={timesheet} apiBase={timesheetApiBase} onChange={setTimesheet} />}
+          {timesheet && <TimesheetView key={`${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} apiBase={timesheetApiBase} onChange={setTimesheet} />}
         </>}
-      </main>
+        </main>
+      </div>
+      {session.passwordExpiryWarning
+        && session.passwordExpiresAt
+        && dismissedPasswordExpiry !== session.passwordExpiresAt
+        && <PasswordExpiryDialog
+          session={session}
+          onClose={() => setDismissedPasswordExpiry(session.passwordExpiresAt ?? '')}
+          onChangePassword={() => {
+            setDismissedPasswordExpiry(session.passwordExpiresAt ?? '')
+            setScreen('password')
+          }}
+        />}
       {deleteTarget && <DeleteTimesheetDialog
         timesheet={deleteTarget}
         apiBase={timesheetApiBase}

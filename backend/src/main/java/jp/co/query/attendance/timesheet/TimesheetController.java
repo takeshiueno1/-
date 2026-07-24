@@ -6,9 +6,14 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotBlank;
 import java.security.Principal;
+import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -39,7 +44,7 @@ public class TimesheetController {
             @Size(max = 500) String workDetail,
             @Size(max = 50) String systemCode) {}
 
-    public record WgRequest(@Size(max = 20) String value) {}
+    public record WgRequest(@NotBlank @Size(max = 20) String value) {}
 
     public record DeleteRequest(
             @NotBlank @Size(max = 128) String password,
@@ -47,12 +52,15 @@ public class TimesheetController {
 
     private final TimesheetService service;
     private final TimesheetDeletionService deletionService;
+    private final TimesheetExportService exportService;
 
     public TimesheetController(
             TimesheetService service,
-            TimesheetDeletionService deletionService) {
+            TimesheetDeletionService deletionService,
+            TimesheetExportService exportService) {
         this.service = service;
         this.deletionService = deletionService;
+        this.exportService = exportService;
     }
 
     @GetMapping("/history")
@@ -63,6 +71,23 @@ public class TimesheetController {
     @GetMapping("/{year}/{month}")
     public Timesheet get(Principal principal, @PathVariable int year, @PathVariable int month) {
         return service.get(principal.getName(), year, month);
+    }
+
+    @GetMapping("/{year}/{month}/export.xlsx")
+    public ResponseEntity<byte[]> export(
+            Principal principal,
+            @PathVariable int year,
+            @PathVariable int month) {
+        TimesheetExportService.ExportedWorkbook workbook = exportService.export(principal.getName(), year, month);
+        ContentDisposition disposition = ContentDisposition.attachment()
+                .filename(workbook.filename(), StandardCharsets.UTF_8)
+                .build();
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .header(HttpHeaders.CONTENT_DISPOSITION, disposition.toString())
+                .contentLength(workbook.content().length)
+                .body(workbook.content());
     }
 
     @PostMapping("/{year}/{month}/initialize")

@@ -2,6 +2,9 @@
 backend/target/
 frontend/node_modules/
 frontend/dist/
+/outputs/
+/tmp/
 *.log
+*.pid
 .idea/
 .vscode/

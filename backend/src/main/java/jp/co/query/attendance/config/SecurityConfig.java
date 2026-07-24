@@ -68,9 +68,10 @@ public class SecurityConfig {
                         .requestMatchers(
                                 "/api/auth/session",
                                 "/api/auth/credential-recovery",
+                                "/api/outlook-drafts/**",
                                 "/actuator/health",
                                 "/error").permitAll()
-                        .requestMatchers("/api/admin/**").hasRole("ADMIN")
+                        .requestMatchers("/api/admin/**", "/api/excel-timesheets").hasRole("ADMIN")
                         .anyRequest().authenticated())
                 .formLogin(form -> form
                         .loginProcessingUrl("/api/auth/login")

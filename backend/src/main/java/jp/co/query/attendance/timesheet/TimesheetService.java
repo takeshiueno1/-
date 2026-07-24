@@ -208,8 +208,10 @@ public class TimesheetService {
         if (!YearMonth.from(date).equals(YearMonth.of(year, month))) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "対象月以外の日付は更新できません。" );
         }
+        validateRequiredHeaderFields(employee, header);
         TimesheetRepository.EntryRow entry = timesheets.findEntry(header.id(), date)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "勤務日がありません。"));
+        validateRequiredWorkdayFields(entry.dayType(), command);
         int standardMinutes = header.requiredWorkMinutes();
         WorkCalculationResult result = calculator.calculate(
                 date,
@@ -252,7 +254,10 @@ public class TimesheetService {
 
     private Timesheet updateWgParticipationFor(
             String actor, String targetUsername, int year, int month, String value) {
-        if (value != null && !value.isBlank() && !List.of("参加", "不参加", "当月未開催").contains(value)) {
+        if (value == null || value.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "WG参加可否は必須です。" );
+        }
+        if (!List.of("参加", "不参加", "当月未開催").contains(value)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "WG参加可否の値が不正です。" );
         }
         Employee employee = employee(targetUsername);
@@ -348,6 +353,36 @@ public class TimesheetService {
         }
         if (standardWorkMinutes(command.standardStart(), command.standardEnd(), command.standardBreakMinutes()) < 0) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "標準勤務時間が不正です。" );
+        }
+    }
+
+    private static void validateRequiredWorkdayFields(DayType dayType, UpdateEntryCommand command) {
+        if (dayType != DayType.WORKDAY) return;
+        var missing = new java.util.ArrayList<String>();
+        if (command.startTime() == null) missing.add("始業");
+        if (command.endTime() == null) missing.add("終業");
+        if (command.breakMinutes() == null) missing.add("休憩");
+        if (command.workDetail() == null || command.workDetail().isBlank()) missing.add("業務内容");
+        if (command.systemCode() == null || command.systemCode().isBlank()) missing.add("システムNo.");
+        if (!missing.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    String.join("、", missing) + "は必須です。");
+        }
+    }
+
+    private static void validateRequiredHeaderFields(Employee employee, TimesheetRepository.Header header) {
+        var missing = new java.util.ArrayList<String>();
+        if (employee.department() == null || employee.department().isBlank()) missing.add("所属");
+        if (employee.displayName() == null || employee.displayName().isBlank()) missing.add("氏名");
+        if (employee.positionName() == null || employee.positionName().isBlank()) missing.add("役職");
+        if (employee.employeeCode() == null || employee.employeeCode().isBlank()) missing.add("コード");
+        if (header.pmarkConfirmationDate() == null) missing.add("Pマーク");
+        if (header.wgParticipation() == null || header.wgParticipation().isBlank()) missing.add("WG");
+        if (!missing.isEmpty()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    String.join("、", missing) + "は必須です。");
         }
     }
 
