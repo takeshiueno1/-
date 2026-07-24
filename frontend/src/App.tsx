@@ -1659,17 +1659,8 @@ function App() {
           <strong>勤怠管理システム</strong>
         </div>
         <div className={`current-user ${hasElevatedRole ? 'elevated-current-user' : ''}`}>
-          <span>ログイン中</span>
-          {hasElevatedRole
-            ? <strong>ユーザーID: {session.username}</strong>
-            : <>
-              <strong>{employee.displayName}</strong>
-              <small>
-                ユーザーID: {session.username}・{employee.employeeCode}
-                {employee.department ? `・${employee.department}` : ''}
-                {employee.positionName ? `・${employee.positionName}` : ''}
-              </small>
-            </>}
+          <strong>{employee.displayName}</strong>
+          <small>{employee.department || '所属部署未設定'}</small>
         </div>
       </header>
       <div className="app-body">
