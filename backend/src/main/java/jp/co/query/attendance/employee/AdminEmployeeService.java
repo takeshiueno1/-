@@ -5,6 +5,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Locale;
 import jp.co.query.attendance.common.AuditLogRepository;
+import jp.co.query.attendance.auth.AccessRole;
 import jp.co.query.attendance.auth.PasswordPolicy;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,7 @@ public class AdminEmployeeService {
             String username,
             boolean enabled,
             boolean mustChangePassword,
+            String accessRole,
             String department,
             String displayName,
             String positionName,
@@ -36,6 +38,7 @@ public class AdminEmployeeService {
     public record CreateCommand(
             String username,
             String password,
+            String accessRole,
             String department,
             String displayName,
             String positionName,
@@ -76,6 +79,17 @@ public class AdminEmployeeService {
         int safeLimit = Math.max(1, Math.min(limit, 100));
         return jdbc.sql("""
                         SELECT u.username, u.enabled, u.must_change_password,
+                               CASE
+                                 WHEN EXISTS (
+                                   SELECT 1 FROM authorities a
+                                    WHERE a.username = u.username AND a.authority = 'ROLE_ADMIN'
+                                 ) THEN 'ADMIN'
+                                 WHEN EXISTS (
+                                   SELECT 1 FROM authorities a
+                                    WHERE a.username = u.username AND a.authority = 'ROLE_MANAGER'
+                                 ) THEN 'MANAGER'
+                                 ELSE 'USER'
+                               END AS access_role,
                                e.department, e.display_name, e.position_name,
                                e.employee_code, e.work_schedule_type, e.standard_start, e.standard_end,
                                e.standard_break_minutes, e.default_system_code
@@ -94,6 +108,7 @@ public class AdminEmployeeService {
                         rs.getString("username"),
                         rs.getBoolean("enabled"),
                         rs.getBoolean("must_change_password"),
+                        rs.getString("access_role"),
                         rs.getString("department"),
                         rs.getString("display_name"),
                         rs.getString("position_name"),
@@ -110,6 +125,7 @@ public class AdminEmployeeService {
     public EmployeeAccount create(String actor, CreateCommand command) {
         String username = normalizeUsername(command.username());
         passwordPolicy.validate(command.password(), username);
+        AccessRole accessRole = AccessRole.from(command.accessRole());
         if (!username.matches("[a-z0-9._-]{3,50}")) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ユーザー名は半角英数字と . _ - を使い3～50文字で入力してください。");
         }
@@ -119,7 +135,7 @@ public class AdminEmployeeService {
         try {
             users.createUser(User.withUsername(username)
                     .password(passwordEncoder.encode(command.password()))
-                    .roles("USER")
+                    .roles(accessRole.springRoles().toArray(String[]::new))
                     .build());
             jdbc.sql("""
                             UPDATE users

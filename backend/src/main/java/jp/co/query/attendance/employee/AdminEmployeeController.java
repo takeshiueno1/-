@@ -6,6 +6,7 @@ import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
+import jakarta.validation.constraints.Pattern;
 import java.security.Principal;
 import java.time.LocalTime;
 import java.util.List;
@@ -27,6 +28,7 @@ public class AdminEmployeeController {
     public record CreateRequest(
             @NotBlank @Size(max = 50) String username,
             @NotBlank @Size(min = 12, max = 128) String password,
+            @NotBlank @Pattern(regexp = "USER|MANAGER|ADMIN") String accessRole,
             @Size(max = 100) String department,
             @NotBlank @Size(max = 100) String displayName,
             @Size(max = 100) String positionName,
@@ -58,7 +60,7 @@ public class AdminEmployeeController {
     @ResponseStatus(HttpStatus.CREATED)
     public AdminEmployeeService.EmployeeAccount create(Principal principal, @Valid @RequestBody CreateRequest request) {
         return service.create(principal.getName(), new AdminEmployeeService.CreateCommand(
-                request.username(), request.password(), request.department(), request.displayName(),
+                request.username(), request.password(), request.accessRole(), request.department(), request.displayName(),
                 request.positionName(), request.employeeCode(), request.workScheduleType(),
                 request.standardStart(), request.standardEnd(), request.standardBreakMinutes(),
                 request.defaultSystemCode()));

@@ -16,7 +16,10 @@ import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.http.HttpStatus;
 
 @RestController
-@RequestMapping("/api/admin/employees/{username}/timesheets")
+@RequestMapping({
+        "/api/admin/employees/{username}/timesheets",
+        "/api/management/employees/{username}/timesheets"
+})
 public class AdminTimesheetController {
 
     private final TimesheetService service;

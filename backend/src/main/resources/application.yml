@@ -47,6 +47,7 @@ app:
   test-user:
     enabled: ${APP_TEST_USER_ENABLED:false}
     password: ${APP_TEST_USER_PASSWORD:}
+    manager-password: ${APP_TEST_MANAGER_PASSWORD:}
   integrations:
     public-base-url: ${APP_PUBLIC_BASE_URL:}
     outlook:

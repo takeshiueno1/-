@@ -59,6 +59,7 @@ public class DemoDataSeeder implements ApplicationRunner {
                 employeeService.create(ACTOR, new AdminEmployeeService.CreateCommand(
                         username,
                         password,
+                        "USER",
                         "検証部門" + (((number - 1) % 5) + 1),
                         "検証社員" + suffix,
                         number % 10 == 0 ? "リーダー" : "担当",

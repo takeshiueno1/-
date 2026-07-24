@@ -78,7 +78,11 @@ type Timesheet = {
   totals: MonthlyTotals
 }
 
-type EmployeeAccount = Employee & { enabled: boolean; mustChangePassword: boolean }
+type EmployeeAccount = Employee & {
+  enabled: boolean
+  mustChangePassword: boolean
+  accessRole: 'USER' | 'MANAGER' | 'ADMIN'
+}
 
 type CalendarImportResult = {
   importId: number
@@ -684,7 +688,8 @@ function AdminPanel({
   const [recoveryRequests, setRecoveryRequests] = useState<PendingRecovery[]>([])
   const [issuedCredential, setIssuedCredential] = useState<{ username: string; password: string } | null>(null)
   const [form, setForm] = useState({
-    username: '', password: '', department: '', displayName: '', positionName: '', employeeCode: '',
+    username: '', password: '', accessRole: 'USER' as EmployeeAccount['accessRole'],
+    department: '', displayName: '', positionName: '', employeeCode: '',
     workScheduleType: '正社員（8時間）', standardStart: '09:30', standardEnd: '18:30',
     standardBreakTime: '1:00', defaultSystemCode: '',
   })
@@ -859,9 +864,9 @@ function AdminPanel({
         </div>
         <p className="muted">提供済みの勤務表形式（.xlsx / .xlsm）を解析し、選択した社員の過去勤務表としてDBへ登録します。ファイル本体とパスワードは保存しません。</p>
         <form className="excel-import-form" onSubmit={(event) => void importExcel(event)}>
-          <label>取込先社員
+          <label>社員選択
             <select value={excelTarget} required onChange={(event) => setExcelTarget(event.target.value)}>
-              <option value="">社員を選択</option>
+              <option value="">社員選択</option>
               {accounts.map((account) => <option key={account.username} value={account.username}>{account.displayName}（{account.employeeCode}）</option>)}
             </select>
           </label>
@@ -900,6 +905,13 @@ function AdminPanel({
               <input type="text" autoComplete="off" minLength={12} maxLength={128} required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
               <button type="button" onClick={() => setForm({ ...form, password: generateStrongPassword() })}>自動生成</button>
             </span>
+          </label>
+          <label>権限
+            <select value={form.accessRole} onChange={(event) => setForm({ ...form, accessRole: event.target.value as EmployeeAccount['accessRole'] })}>
+              <option value="USER">一般</option>
+              <option value="MANAGER">役職者</option>
+              <option value="ADMIN">管理者</option>
+            </select>
           </label>
           <label>氏名<input value={form.displayName} required maxLength={100} onChange={(event) => setForm({ ...form, displayName: event.target.value })} /></label>
           <label>社員コード<input value={form.employeeCode} required maxLength={50} onChange={(event) => setForm({ ...form, employeeCode: event.target.value })} /></label>
@@ -942,7 +954,9 @@ function AdminPanel({
         <div className="account-list">
           {visibleAccounts.map((account) => <div className="account-row" key={account.username}>
             <div><strong>{account.displayName}</strong><span>{account.employeeCode} · {account.department || '所属未設定'} · {account.username}</span></div>
-            <span className={account.enabled ? 'status-enabled' : 'status-disabled'}>{account.enabled ? '有効' : '無効'}</span>
+            <span className={account.enabled ? 'status-enabled' : 'status-disabled'}>
+              {account.enabled ? '有効' : '無効'}・{account.accessRole === 'ADMIN' ? '管理者' : account.accessRole === 'MANAGER' ? '役職者' : '一般'}
+            </span>
             <div className="account-actions">
               {account.mustChangePassword && <span className="password-change-pending">初回変更待ち</span>}
               <button onClick={() => resetPassword(account)}>仮パスワード再発行</button>
@@ -1409,7 +1423,7 @@ function App() {
   const [error, setError] = useState('')
   const [screen, setScreen] = useState<Screen>('home')
   const [history, setHistory] = useState<TimesheetHistoryItem[]>([])
-  const [editableEmployees, setEditableEmployees] = useState<EmployeeAccount[]>([])
+  const [editableEmployees, setEditableEmployees] = useState<Employee[]>([])
   const [selectedUsername, setSelectedUsername] = useState('')
   const [employeeSearch, setEmployeeSearch] = useState('')
   const [importNotice, setImportNotice] = useState<ExcelImportResult | null>(null)
@@ -1418,6 +1432,8 @@ function App() {
   const [dismissedPasswordExpiry, setDismissedPasswordExpiry] = useState('')
 
   const isAdmin = session?.roles.includes('ROLE_ADMIN') ?? false
+  const isManager = session?.roles.includes('ROLE_MANAGER') ?? false
+  const canEditOthers = isAdmin || isManager
   const hasElevatedRole = session?.roles.some((role) => role !== 'ROLE_USER') ?? false
   const targetUsername = selectedUsername || session?.username || ''
   const targetEmployee = targetUsername === session?.username
@@ -1433,14 +1449,14 @@ function App() {
     ].some((value) => value.toLocaleLowerCase('ja-JP').includes(normalizedEmployeeSearch))).slice(0, 8)
     : []
   const timesheetApiBase = targetUsername && targetUsername !== session?.username
-    ? `/api/admin/employees/${encodeURIComponent(targetUsername)}/timesheets`
+    ? `/api/management/employees/${encodeURIComponent(targetUsername)}/timesheets`
     : '/api/timesheets'
 
   const searchEmployees = useCallback(async (query: string) => {
-    if (!isAdmin) return
+    if (!canEditOthers) return
     try {
-      const result = await request<EmployeeAccount[]>(
-        `/api/admin/employees?query=${encodeURIComponent(query)}&limit=100`,
+      const result = await request<Employee[]>(
+        `/api/management/employees?query=${encodeURIComponent(query)}&limit=100`,
       )
       setEditableEmployees((current) => {
         const selected = current.find((account) => account.username === targetUsername)
@@ -1451,7 +1467,7 @@ function App() {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : '社員を検索できませんでした。')
     }
-  }, [isAdmin, targetUsername])
+  }, [canEditOthers, targetUsername])
 
   const returnToLogin = useCallback((next: Session, notice = '') => {
     csrf = next
@@ -1543,27 +1559,27 @@ function App() {
   }, [session])
 
   useEffect(() => {
-    if (!session?.authenticated || session.mustChangePassword || !isAdmin) {
+    if (!session?.authenticated || session.mustChangePassword || !canEditOthers) {
       setEditableEmployees([])
       return
     }
-    request<EmployeeAccount[]>('/api/admin/employees?limit=100')
+    request<Employee[]>('/api/management/employees?limit=100')
       .then(setEditableEmployees)
       .catch((reason) => setError(reason.message))
-  }, [session, isAdmin])
+  }, [session, canEditOthers])
 
   useEffect(() => {
     setEmployeeSearch('')
   }, [screen])
 
   useEffect(() => {
-    if (!isAdmin || (screen !== 'new' && screen !== 'history')) return
+    if (!canEditOthers || (screen !== 'new' && screen !== 'history')) return
     const timer = window.setTimeout(
       () => { void searchEmployees(employeeSearch) },
       employeeSearch.trim() ? 250 : 0,
     )
     return () => window.clearTimeout(timer)
-  }, [employeeSearch, isAdmin, screen, searchEmployees])
+  }, [employeeSearch, canEditOthers, screen, searchEmployees])
 
   useEffect(() => {
     if (!session?.authenticated || session.mustChangePassword || !targetEmployee) return
@@ -1698,8 +1714,8 @@ function App() {
         {screen === 'admin-recovery' && <AdminPanel currentUsername={session.username} section="recovery" onBack={() => setScreen('admin-menu')} />}
         {(screen === 'new' || screen === 'history') && <>
           <div className="month-toolbar">
-            {isAdmin && <label className="employee-picker">
-              <span>対象社員（管理者のみ）</span>
+            {canEditOthers && <label className="employee-picker">
+              <span>社員選択</span>
               <div className="employee-search-box predictive-search">
                 <input
                   aria-label="社員を検索"
@@ -1721,7 +1737,7 @@ function App() {
                   ))}
                 </span>}
               </div>
-              <select aria-label="編集する社員を選択" value={targetUsername} onChange={(event) => selectEmployee(event.target.value)}>
+              <select aria-label="社員選択" value={targetUsername} onChange={(event) => selectEmployee(event.target.value)}>
                 {editableEmployees.map((account) => <option key={account.username} value={account.username}>{account.displayName}（{account.employeeCode}）</option>)}
               </select>
             </label>}
@@ -1739,7 +1755,8 @@ function App() {
                 ))}
               </select>
             </label>}
-            {timesheet && <button className="toolbar-danger-button" type="button" onClick={() => setDeleteTarget(timesheet)}>勤務表を削除</button>}
+            {timesheet && (targetUsername === session.username || isAdmin)
+              && <button className="toolbar-danger-button" type="button" onClick={() => setDeleteTarget(timesheet)}>勤務表を削除</button>}
           </div>
           {error && <p className="error-message">{error}</p>}
           {importNotice && screen === 'history' && <div className="import-result" role="status">
@@ -1748,7 +1765,7 @@ function App() {
             {importNotice.warnings.map((warning) => <p className="warning-message" key={warning}>{warning}</p>)}
             <button type="button" onClick={() => setImportNotice(null)}>通知を閉じる</button>
           </div>}
-          {targetUsername !== session.username && <p className="delegated-edit-note">管理者権限で <strong>{targetEmployee?.displayName}</strong> さんの勤務表を参照・編集しています。操作は監査ログに記録されます。</p>}
+          {targetUsername !== session.username && <p className="delegated-edit-note">{isAdmin ? '管理者' : '役職者'}権限で <strong>{targetEmployee?.displayName}</strong> さんの勤務表を参照・編集しています。操作は監査ログに記録されます。</p>}
           {notFound && screen === 'history' && <section className="empty-state"><h2>勤務表がありません</h2><p className="muted">「過去の勤怠」から登録済みの月を選択してください。</p></section>}
           {notFound && screen === 'new' && targetEmployee && <Initializer employee={targetEmployee} year={year} month={month} apiBase={timesheetApiBase} onCreated={(value) => { setTimesheet(value); setNotFound(false); rememberMonth(value) }} />}
           {timesheet && <TimesheetView key={`${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} apiBase={timesheetApiBase} onChange={setTimesheet} />}
