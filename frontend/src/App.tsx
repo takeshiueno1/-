@@ -1434,7 +1434,9 @@ function App() {
   const isAdmin = session?.roles.includes('ROLE_ADMIN') ?? false
   const isManager = session?.roles.includes('ROLE_MANAGER') ?? false
   const canEditOthers = isAdmin || isManager
-  const hasElevatedRole = session?.roles.some((role) => role !== 'ROLE_USER') ?? false
+  // Spring Securityが付与する認証要素（FACTOR_PASSWORD等）は画面権限ではない。
+  // ブルーテーマは業務権限が役職者または管理者の場合だけ適用する。
+  const hasElevatedRole = isManager || isAdmin
   const targetUsername = selectedUsername || session?.username || ''
   const targetEmployee = targetUsername === session?.username
     ? employee
