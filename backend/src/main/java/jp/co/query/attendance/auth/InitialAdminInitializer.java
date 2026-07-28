@@ -19,6 +19,7 @@ public class InitialAdminInitializer implements ApplicationRunner {
     private final JdbcUserDetailsManager users;
     private final PasswordEncoder passwordEncoder;
     private final EmployeeRepository employees;
+    private final PasswordPolicy passwordPolicy;
     private final String username;
     private final String password;
 
@@ -26,11 +27,13 @@ public class InitialAdminInitializer implements ApplicationRunner {
             JdbcUserDetailsManager userDetailsService,
             PasswordEncoder passwordEncoder,
             EmployeeRepository employees,
+            PasswordPolicy passwordPolicy,
             @Value("${app.initial-admin.username}") String username,
             @Value("${app.initial-admin.password}") String password) {
         this.users = userDetailsService;
         this.passwordEncoder = passwordEncoder;
         this.employees = employees;
+        this.passwordPolicy = passwordPolicy;
         this.username = username;
         this.password = password;
     }
@@ -45,11 +48,13 @@ public class InitialAdminInitializer implements ApplicationRunner {
             log.warn("初期管理者は作成されません。APP_INITIAL_ADMIN_PASSWORD を設定してください。");
             return;
         }
+        passwordPolicy.validate(password, username);
         users.createUser(User.withUsername(username)
                 .password(passwordEncoder.encode(password))
                 .roles("USER", "ADMIN")
                 .build());
         employees.createProfileIfMissing(username, "管理者", "ADMIN");
         log.info("初期管理者アカウントを作成しました。");
+        log.info("INITIAL_ADMIN_CREATED username={}", username);
     }
 }

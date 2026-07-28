@@ -1,5 +1,6 @@
 package jp.co.query.attendance.auth;
 
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,7 +25,8 @@ public class AuthController {
     }
 
     @GetMapping("/session")
-    public Map<String, Object> session(Authentication authentication, CsrfToken csrfToken) {
+    public Map<String, Object> session(Authentication authentication, HttpServletRequest request) {
+        CsrfToken csrfToken = (CsrfToken) request.getAttribute(CsrfToken.class.getName());
         boolean authenticated = authentication != null
                 && authentication.isAuthenticated()
                 && !(authentication instanceof AnonymousAuthenticationToken);
@@ -52,8 +54,8 @@ public class AuthController {
         result.put("passwordExpiryWarning", lifecycle != null && lifecycle.warning());
         result.put("passwordExpiryDaysRemaining", lifecycle == null ? null : lifecycle.daysRemaining());
         result.put("passwordExpiresAt", lifecycle == null ? null : lifecycle.expiresAt());
-        result.put("csrfToken", csrfToken.getToken());
-        result.put("csrfHeaderName", csrfToken.getHeaderName());
+        result.put("csrfToken", csrfToken == null ? "" : csrfToken.getToken());
+        result.put("csrfHeaderName", csrfToken == null ? "" : csrfToken.getHeaderName());
         return result;
     }
 }

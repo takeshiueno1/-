@@ -18,9 +18,13 @@ import org.springframework.web.bind.annotation.RestController;
 public class OutlookDraftController {
 
     private final OutlookDraftService drafts;
+    private final CredentialOutlookDraftService credentialDrafts;
 
-    public OutlookDraftController(OutlookDraftService drafts) {
+    public OutlookDraftController(
+            OutlookDraftService drafts,
+            CredentialOutlookDraftService credentialDrafts) {
         this.drafts = drafts;
+        this.credentialDrafts = credentialDrafts;
     }
 
     @PostMapping("/timesheets/{year}/{month}/outlook-draft")
@@ -34,6 +38,22 @@ public class OutlookDraftController {
     @GetMapping("/outlook-drafts/{token}.eml")
     public ResponseEntity<byte[]> download(@PathVariable String token) {
         OutlookDraftService.DraftMail mail = drafts.consume(token);
+        return ResponseEntity.ok()
+                .contentType(MediaType.parseMediaType("message/rfc822"))
+                .cacheControl(CacheControl.noStore())
+                .header(
+                        HttpHeaders.CONTENT_DISPOSITION,
+                        ContentDisposition.attachment()
+                                .filename(mail.filename(), StandardCharsets.UTF_8)
+                                .build()
+                                .toString())
+                .contentLength(mail.content().length)
+                .body(mail.content());
+    }
+
+    @GetMapping("/credential-outlook-drafts/{token}.eml")
+    public ResponseEntity<byte[]> downloadCredential(@PathVariable String token) {
+        CredentialOutlookDraftService.DraftMail mail = credentialDrafts.consume(token);
         return ResponseEntity.ok()
                 .contentType(MediaType.parseMediaType("message/rfc822"))
                 .cacheControl(CacheControl.noStore())

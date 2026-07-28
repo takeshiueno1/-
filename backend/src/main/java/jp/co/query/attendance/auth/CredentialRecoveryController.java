@@ -59,8 +59,13 @@ public class CredentialRecoveryController {
         employee.ifPresent(value -> {
             int inserted = jdbc.sql("""
                             INSERT INTO credential_recovery_requests (employee_id)
-                            VALUES (:employeeId)
-                            ON CONFLICT (employee_id) WHERE status = 'PENDING' DO NOTHING
+                            SELECT :employeeId
+                             WHERE NOT EXISTS (
+                                 SELECT 1
+                                   FROM credential_recovery_requests
+                                  WHERE employee_id = :employeeId
+                                    AND status = 'PENDING'
+                             )
                             """)
                     .param("employeeId", value.id())
                     .update();

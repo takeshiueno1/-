@@ -18,6 +18,7 @@ public class TestUserInitializer implements ApplicationRunner {
     private final JdbcUserDetailsManager users;
     private final PasswordEncoder passwordEncoder;
     private final JdbcClient jdbc;
+    private final PasswordPolicy passwordPolicy;
     private final String generalPassword;
     private final String managerPassword;
 
@@ -25,11 +26,13 @@ public class TestUserInitializer implements ApplicationRunner {
             JdbcUserDetailsManager users,
             PasswordEncoder passwordEncoder,
             JdbcClient jdbc,
+            PasswordPolicy passwordPolicy,
             @Value("${app.test-user.password:}") String generalPassword,
             @Value("${app.test-user.manager-password:}") String managerPassword) {
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.jdbc = jdbc;
+        this.passwordPolicy = passwordPolicy;
         this.generalPassword = generalPassword;
         this.managerPassword = managerPassword;
     }
@@ -43,6 +46,8 @@ public class TestUserInitializer implements ApplicationRunner {
                     "APP_TEST_USER_ENABLED=true の場合は "
                             + "APP_TEST_USER_PASSWORD と APP_TEST_MANAGER_PASSWORD を設定してください。");
         }
+        passwordPolicy.validate(generalPassword, "test");
+        passwordPolicy.validate(managerPassword, "test02");
         upsertUser(
                 "test",
                 generalPassword,

@@ -10,6 +10,7 @@ import jakarta.validation.constraints.Pattern;
 import java.security.Principal;
 import java.time.LocalTime;
 import java.util.List;
+import jp.co.query.attendance.integration.CredentialOutlookDraftService;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -27,7 +28,9 @@ public class AdminEmployeeController {
 
     public record CreateRequest(
             @NotBlank @Size(max = 50) String username,
-            @NotBlank @Size(min = 12, max = 128) String password,
+            @NotBlank @Size(min = 8, max = 15)
+            @Pattern(regexp = "[A-Za-z0-9]+", message = "パスワードは半角英数字で入力してください。")
+            String password,
             @NotBlank @Pattern(regexp = "USER|MANAGER|ADMIN") String accessRole,
             @Size(max = 100) String department,
             @NotBlank @Size(max = 100) String displayName,
@@ -41,7 +44,10 @@ public class AdminEmployeeController {
 
     public record EnabledRequest(boolean enabled) {}
 
-    public record PasswordRequest(@NotBlank @Size(min = 12, max = 128) String password) {}
+    public record PasswordRequest(
+            @NotBlank @Size(min = 8, max = 15)
+            @Pattern(regexp = "[A-Za-z0-9]+", message = "パスワードは半角英数字で入力してください。")
+            String password) {}
 
     private final AdminEmployeeService service;
 
@@ -76,5 +82,16 @@ public class AdminEmployeeController {
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void password(Principal principal, @PathVariable String username, @Valid @RequestBody PasswordRequest request) {
         service.resetPassword(principal.getName(), username, request.password());
+    }
+
+    @PostMapping("/{username}/credential-outlook-draft")
+    public CredentialOutlookDraftService.DraftToken credentialOutlookDraft(
+            Principal principal,
+            @PathVariable String username,
+            @Valid @RequestBody PasswordRequest request) {
+        return service.createCredentialOutlookDraft(
+                principal.getName(),
+                username,
+                request.password());
     }
 }

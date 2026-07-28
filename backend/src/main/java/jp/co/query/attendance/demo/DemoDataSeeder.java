@@ -45,8 +45,8 @@ public class DemoDataSeeder implements ApplicationRunner {
 
     @Override
     public void run(ApplicationArguments args) {
-        if (password.length() < 12 || password.length() > 128) {
-            throw new IllegalStateException("APP_DEMO_SEED_PASSWORDは12～128文字で設定してください。");
+        if (!password.matches("[A-Za-z0-9]{8,15}")) {
+            throw new IllegalStateException("APP_DEMO_SEED_PASSWORDは8～15文字の半角英数字で設定してください。");
         }
         YearMonth current = YearMonth.now(ZoneId.of("Asia/Tokyo"));
         int createdUsers = 0;
@@ -61,7 +61,7 @@ public class DemoDataSeeder implements ApplicationRunner {
                         password,
                         "USER",
                         "検証部門" + (((number - 1) % 5) + 1),
-                        "検証社員" + suffix,
+                        DemoEmployeeNames.get(number),
                         number % 10 == 0 ? "リーダー" : "担当",
                         employeeCode,
                         "正社員（8時間）",
@@ -92,5 +92,6 @@ public class DemoDataSeeder implements ApplicationRunner {
             }
         }
         LOGGER.info("ローカル検証データを準備しました。利用者作成数={}, 勤務表作成数={}", createdUsers, createdSheets);
+        LOGGER.info("DEMO_SEED_COMPLETED users={} timesheets={}", createdUsers, createdSheets);
     }
 }

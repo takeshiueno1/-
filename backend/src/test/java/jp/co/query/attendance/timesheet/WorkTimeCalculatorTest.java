@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class WorkTimeCalculatorTest {
 
@@ -72,6 +74,23 @@ class WorkTimeCalculatorTest {
 
         assertThat(result.systemCode()).isEqualTo("QS001");
         assertThat(result.weekdayMinutes()).isEqualTo(480);
+        assertThat(result.warnings()).isEmpty();
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "360, 360",
+        "420, 420"
+    })
+    void reproducesSixAndSevenHourPaidLeaveFromExcelMacro(
+            int standardWorkMinutes,
+            int expectedMinutes) {
+        WorkCalculationResult result = calculator.calculate(
+                LocalDate.of(2026, 6, 1), DayType.WORKDAY, standardWorkMinutes,
+                null, null, null, "有給休暇", "", "", "DEFAULT");
+
+        assertThat(result.systemCode()).isEqualTo("QS001");
+        assertThat(result.weekdayMinutes()).isEqualTo(expectedMinutes);
         assertThat(result.warnings()).isEmpty();
     }
 

@@ -7,6 +7,7 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import jp.co.query.attendance.common.GeneratedKeyJdbc;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 
@@ -42,9 +43,11 @@ public class TimesheetRepository {
     public record MonthHeader(int year, int month) {}
 
     private final JdbcClient jdbc;
+    private final GeneratedKeyJdbc generatedKeys;
 
-    public TimesheetRepository(JdbcClient jdbc) {
+    public TimesheetRepository(JdbcClient jdbc, GeneratedKeyJdbc generatedKeys) {
         this.jdbc = jdbc;
+        this.generatedKeys = generatedKeys;
     }
 
     public Optional<Header> findHeader(long employeeId, int year, int month) {
@@ -101,26 +104,22 @@ public class TimesheetRepository {
             int requiredWorkMinutes,
             String defaultSystemCode,
             LocalDate pmarkDate) {
-        return jdbc.sql("""
+        return generatedKeys.insert("""
                         INSERT INTO timesheets (
                             employee_id, target_year, target_month, standard_start, standard_end,
                             standard_break_minutes, required_work_minutes, default_system_code, pmark_confirmation_date)
-                        VALUES (
-                            :employeeId, :year, :month, :standardStart, :standardEnd,
-                            :standardBreakMinutes, :requiredWorkMinutes, :defaultSystemCode, :pmarkDate)
-                        RETURNING id
-                        """)
-                .param("employeeId", employeeId)
-                .param("year", year)
-                .param("month", month)
-                .param("standardStart", Time.valueOf(standardStart))
-                .param("standardEnd", Time.valueOf(standardEnd))
-                .param("standardBreakMinutes", standardBreakMinutes)
-                .param("requiredWorkMinutes", requiredWorkMinutes)
-                .param("defaultSystemCode", defaultSystemCode)
-                .param("pmarkDate", Date.valueOf(pmarkDate))
-                .query(Long.class)
-                .single();
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                List.of(
+                        employeeId,
+                        year,
+                        month,
+                        Time.valueOf(standardStart),
+                        Time.valueOf(standardEnd),
+                        standardBreakMinutes,
+                        requiredWorkMinutes,
+                        defaultSystemCode,
+                        Date.valueOf(pmarkDate)));
     }
 
     public void resetHeader(

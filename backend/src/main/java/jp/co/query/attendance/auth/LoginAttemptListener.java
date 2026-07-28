@@ -1,5 +1,8 @@
 package jp.co.query.attendance.auth;
 
+import java.sql.Timestamp;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.security.authentication.event.AuthenticationFailureBadCredentialsEvent;
@@ -23,12 +26,13 @@ public class LoginAttemptListener {
                         UPDATE users
                            SET failed_login_count = failed_login_count + 1,
                                locked_until = CASE
-                                   WHEN failed_login_count + 1 >= 5 THEN CURRENT_TIMESTAMP + INTERVAL '15 minutes'
+                                   WHEN failed_login_count + 1 >= 5 THEN :lockedUntil
                                    ELSE locked_until
                                END
                          WHERE username = :username
                         """)
                 .param("username", username)
+                .param("lockedUntil", Timestamp.from(Instant.now().plus(15, ChronoUnit.MINUTES)))
                 .update();
     }
 

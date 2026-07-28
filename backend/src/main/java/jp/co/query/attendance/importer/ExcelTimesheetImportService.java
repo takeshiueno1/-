@@ -8,13 +8,13 @@ import java.time.LocalDate;
 import java.util.HexFormat;
 import java.util.List;
 import jp.co.query.attendance.common.AuditLogRepository;
+import jp.co.query.attendance.common.GeneratedKeyJdbc;
 import jp.co.query.attendance.employee.Employee;
 import jp.co.query.attendance.employee.EmployeeRepository;
 import jp.co.query.attendance.timesheet.Timesheet;
 import jp.co.query.attendance.timesheet.TimesheetRepository;
 import jp.co.query.attendance.timesheet.TimesheetService;
 import org.springframework.http.HttpStatus;
-import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -40,7 +40,7 @@ public class ExcelTimesheetImportService {
     private final EmployeeRepository employees;
     private final TimesheetService timesheetService;
     private final TimesheetRepository timesheets;
-    private final JdbcClient jdbc;
+    private final GeneratedKeyJdbc generatedKeys;
     private final AuditLogRepository auditLogs;
 
     public ExcelTimesheetImportService(
@@ -48,13 +48,13 @@ public class ExcelTimesheetImportService {
             EmployeeRepository employees,
             TimesheetService timesheetService,
             TimesheetRepository timesheets,
-            JdbcClient jdbc,
+            GeneratedKeyJdbc generatedKeys,
             AuditLogRepository auditLogs) {
         this.parser = parser;
         this.employees = employees;
         this.timesheetService = timesheetService;
         this.timesheets = timesheets;
-        this.jdbc = jdbc;
+        this.generatedKeys = generatedKeys;
         this.auditLogs = auditLogs;
     }
 
@@ -70,28 +70,26 @@ public class ExcelTimesheetImportService {
         Employee target = employees.findByUsername(targetUsername)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "取込先の社員が見つかりません。"));
         String filename = safeFilename(file.getOriginalFilename());
-        long importId = jdbc.sql("""
+        long importId = generatedKeys.insert("""
                         INSERT INTO excel_timesheet_imports (
                             employee_id, source_filename, source_sha256, source_bytes,
                             source_employee_name, source_employee_code, target_year, target_month,
                             imported_rows, imported_by)
                         VALUES (
-                            :employeeId, :filename, :sha256, :bytes,
-                            :sourceName, :sourceCode, :year, :month, :rows, :actor)
-                        RETURNING id
-                        """)
-                .param("employeeId", target.id())
-                .param("filename", filename)
-                .param("sha256", sha256(bytes))
-                .param("bytes", bytes.length)
-                .param("sourceName", parsed.sourceEmployeeName())
-                .param("sourceCode", parsed.sourceEmployeeCode())
-                .param("year", parsed.year())
-                .param("month", parsed.month())
-                .param("rows", parsed.entries().size())
-                .param("actor", actor)
-                .query(Long.class)
-                .single();
+                            ?, ?, ?, ?,
+                            ?, ?, ?, ?, ?, ?)
+                        """,
+                List.of(
+                        target.id(),
+                        filename,
+                        sha256(bytes),
+                        bytes.length,
+                        parsed.sourceEmployeeName(),
+                        parsed.sourceEmployeeCode(),
+                        parsed.year(),
+                        parsed.month(),
+                        parsed.entries().size(),
+                        actor));
 
         Timesheet imported = timesheetService.initializeAsAdmin(
                 actor,

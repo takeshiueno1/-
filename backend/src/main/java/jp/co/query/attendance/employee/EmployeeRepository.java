@@ -41,8 +41,10 @@ public class EmployeeRepository {
     public void createProfileIfMissing(String username, String displayName, String employeeCode) {
         jdbc.sql("""
                         INSERT INTO employees (username, display_name, employee_code)
-                        VALUES (:username, :displayName, :employeeCode)
-                        ON CONFLICT (username) DO NOTHING
+                        SELECT :username, :displayName, :employeeCode
+                         WHERE NOT EXISTS (
+                             SELECT 1 FROM employees WHERE username = :username
+                         )
                         """)
                 .param("username", username)
                 .param("displayName", displayName)

@@ -4,10 +4,13 @@ import jakarta.servlet.http.HttpServletResponse;
 import javax.sql.DataSource;
 import jp.co.query.attendance.auth.MustChangePasswordFilter;
 import jp.co.query.attendance.auth.LoginInputValidationFilter;
+import jp.co.query.attendance.auth.LoginFailureHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.HttpMethod;
+import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
 import org.springframework.security.config.Customizer;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -57,19 +60,32 @@ public class SecurityConfig {
     SecurityFilterChain securityFilterChain(
             HttpSecurity http,
             MustChangePasswordFilter mustChangePasswordFilter,
-            LoginInputValidationFilter loginInputValidationFilter) throws Exception {
+            LoginInputValidationFilter loginInputValidationFilter,
+            LoginFailureHandler loginFailureHandler,
+            @Value("${app.security.csrf-enabled:true}") boolean csrfEnabled) throws Exception {
         var csrfRepository = new CookieCsrfTokenRepository();
         csrfRepository.setCookieName("XSRF-TOKEN");
         csrfRepository.setHeaderName("X-XSRF-TOKEN");
         csrfRepository.setCookieCustomizer(builder -> builder.httpOnly(true).sameSite("Strict").path("/"));
 
+        if (csrfEnabled) {
+            http.csrf(csrf -> csrf.csrfTokenRepository(csrfRepository));
+        } else {
+            http.csrf(AbstractHttpConfigurer::disable);
+        }
+
         http
-                .csrf(csrf -> csrf.csrfTokenRepository(csrfRepository))
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(
+                                "/",
+                                "/index.html",
+                                "/assets/**",
+                                "/query-logo-header.png",
+                                "/favicon.ico",
                                 "/api/auth/session",
                                 "/api/auth/credential-recovery",
                                 "/api/outlook-drafts/**",
+                                "/api/credential-outlook-drafts/**",
                                 "/actuator/health",
                                 "/error").permitAll()
                         .requestMatchers(HttpMethod.DELETE, "/api/management/**").hasRole("ADMIN")
@@ -79,7 +95,7 @@ public class SecurityConfig {
                 .formLogin(form -> form
                         .loginProcessingUrl("/api/auth/login")
                         .successHandler((request, response, authentication) -> response.setStatus(HttpServletResponse.SC_NO_CONTENT))
-                        .failureHandler((request, response, exception) -> writeError(response, HttpServletResponse.SC_UNAUTHORIZED, "ユーザーIDまたはパスワードが正しくありません。")))
+                        .failureHandler(loginFailureHandler))
                 .logout(logout -> logout
                         .logoutUrl("/api/auth/logout")
                         .invalidateHttpSession(true)

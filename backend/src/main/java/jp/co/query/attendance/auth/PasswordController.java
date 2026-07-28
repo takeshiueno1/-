@@ -2,6 +2,7 @@ package jp.co.query.attendance.auth;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 import java.security.Principal;
 import jp.co.query.attendance.common.AuditLogRepository;
@@ -22,7 +23,10 @@ public class PasswordController {
 
     public record PasswordChangeRequest(
             @NotBlank @Size(max = 128) String currentPassword,
-            @NotBlank @Size(min = 12, max = 128) String newPassword) {}
+            @NotBlank
+            @Size(min = 8, max = 15)
+            @Pattern(regexp = "[A-Za-z0-9]+", message = "パスワードは半角英数字で入力してください。")
+            String newPassword) {}
 
     private final UserDetailsService users;
     private final PasswordEncoder passwordEncoder;

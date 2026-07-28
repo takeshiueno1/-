@@ -11,18 +11,30 @@ class PasswordPolicyTest {
     private final PasswordPolicy policy = new PasswordPolicy();
 
     @Test
-    void acceptsLongPassphraseWithoutCompositionRequirement() {
-        assertThatCode(() -> policy.validate("correct horse battery staple", "ueno"))
+    void acceptsEightAndFifteenAsciiAlphanumericCharacters() {
+        assertThatCode(() -> policy.validate("ueno2026", "ueno"))
+                .doesNotThrowAnyException();
+        assertThatCode(() -> policy.validate("Abcdefghijk1234", "ueno"))
                 .doesNotThrowAnyException();
     }
 
     @Test
-    void rejectsShortCommonAndUsernameBasedPasswords() {
-        assertThatThrownBy(() -> policy.validate("short", "ueno"))
+    void acceptsUsernameBasedPasswords() {
+        assertThatCode(() -> policy.validate("ueno2026", "ueno"))
+                .doesNotThrowAnyException();
+    }
+
+    @Test
+    void rejectsOutOfRangeNonAsciiAlphanumericAndCommonPasswords() {
+        assertThatThrownBy(() -> policy.validate("short7", "ueno"))
                 .isInstanceOf(ResponseStatusException.class);
-        assertThatThrownBy(() -> policy.validate("password1234", "ueno"))
+        assertThatThrownBy(() -> policy.validate("Abcdefghijk12345", "ueno"))
                 .isInstanceOf(ResponseStatusException.class);
-        assertThatThrownBy(() -> policy.validate("Secure-ueno-2026!", "ueno"))
+        assertThatThrownBy(() -> policy.validate("DemoUser-2026", "ueno"))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> policy.validate("Ａbcdefg1", "ueno"))
+                .isInstanceOf(ResponseStatusException.class);
+        assertThatThrownBy(() -> policy.validate("password", "ueno"))
                 .isInstanceOf(ResponseStatusException.class);
     }
 }

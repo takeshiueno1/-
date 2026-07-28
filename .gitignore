@@ -4,6 +4,7 @@ frontend/node_modules/
 frontend/dist/
 /outputs/
 /tmp/
+/dist/
 *.log
 *.pid
 .idea/

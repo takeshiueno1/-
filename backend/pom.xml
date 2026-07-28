@@ -120,4 +120,28 @@
 		</plugins>
 	</build>
 
+	<profiles>
+		<profile>
+			<id>demo</id>
+			<dependencies>
+				<dependency>
+					<groupId>com.h2database</groupId>
+					<artifactId>h2</artifactId>
+					<scope>runtime</scope>
+				</dependency>
+			</dependencies>
+			<build>
+				<resources>
+					<resource>
+						<directory>src/main/resources</directory>
+					</resource>
+					<resource>
+						<directory>../frontend/dist</directory>
+						<targetPath>static</targetPath>
+					</resource>
+				</resources>
+			</build>
+		</profile>
+	</profiles>
+
 </project>

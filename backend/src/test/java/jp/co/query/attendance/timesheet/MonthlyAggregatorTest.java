@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import java.time.LocalDate;
 import java.util.List;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class MonthlyAggregatorTest {
 
@@ -34,6 +37,31 @@ class MonthlyAggregatorTest {
         });
         assertThat(result.halfDayCount()).isEqualTo(1);
         assertThat(result.requiredDays()).isEqualTo(7);
+    }
+
+    @ParameterizedTest
+    @CsvSource({
+        "360, 7920",
+        "420, 9240"
+    })
+    void reproducesSixAndSevenHourRequiredTimeFromExcelMacro(
+            int standardWorkMinutes,
+            int expectedRequiredMinutes) {
+        List<DailyEntry> entries = IntStream.rangeClosed(1, 22)
+                .mapToObj(day -> entry(
+                        day,
+                        "2026-06-" + String.format("%02d", day),
+                        "CODE1",
+                        null,
+                        standardWorkMinutes,
+                        DayType.WORKDAY))
+                .toList();
+
+        MonthlyTotals result = aggregator.aggregate(entries, standardWorkMinutes);
+
+        assertThat(result.requiredDays()).isEqualTo(22);
+        assertThat(result.requiredMinutes()).isEqualTo(expectedRequiredMinutes);
+        assertThat(result.differenceMinutes()).isZero();
     }
 
     private static DailyEntry entry(long id, String date, String code, String leave, int minutes, DayType dayType) {

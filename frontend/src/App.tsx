@@ -118,16 +118,42 @@ type IntegrationStatus = {
 
 let csrf: Pick<Session, 'csrfToken' | 'csrfHeaderName'> | null = null
 const IDLE_TIMEOUT_MS = 30 * 60 * 1000
+const SESSION_EXPIRED_EVENT = 'attendance:session-expired'
+const NEW_PASSWORD_PATTERN = /^[A-Za-z0-9]{8,15}$/
+
+function anonymousSession(): Session {
+  return {
+    authenticated: false,
+    username: '',
+    roles: [],
+    mustChangePassword: false,
+    passwordExpired: false,
+    passwordExpiryWarning: false,
+    passwordExpiryDaysRemaining: null,
+    passwordExpiresAt: null,
+    csrfToken: '',
+    csrfHeaderName: 'X-XSRF-TOKEN',
+  }
+}
 
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   if (options.body && !(options.body instanceof FormData) && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json')
   }
-  if (csrf && options.method && options.method !== 'GET') headers.set(csrf.csrfHeaderName, csrf.csrfToken)
+  if (csrf?.csrfHeaderName && csrf.csrfToken && options.method && options.method !== 'GET') {
+    headers.set(csrf.csrfHeaderName, csrf.csrfToken)
+  }
   const response = await fetch(path, { ...options, headers, credentials: 'same-origin' })
   if (!response.ok) {
     const body = await response.json().catch(() => ({ message: '通信に失敗しました。' }))
+    if (response.status === 401
+      && path !== '/api/auth/login'
+      && path !== '/api/auth/session'
+      && path !== '/api/auth/credential-recovery') {
+      csrf = null
+      window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT))
+    }
     const error = new Error(body.message ?? body.detail ?? '通信に失敗しました。') as Error & { status?: number }
     error.status = response.status
     throw error
@@ -220,7 +246,6 @@ function generateStrongPassword(): string {
     'ABCDEFGHJKLMNPQRSTUVWXYZ',
     'abcdefghijkmnopqrstuvwxyz',
     '23456789',
-    '!@#$%&*+-=?',
   ]
   const randomIndex = (length: number) => {
     const random = new Uint32Array(1)
@@ -232,7 +257,7 @@ function generateStrongPassword(): string {
   }
   const characters = groups.map((group) => group[randomIndex(group.length)])
   const all = groups.join('')
-  while (characters.length < 20) characters.push(all[randomIndex(all.length)])
+  while (characters.length < 15) characters.push(all[randomIndex(all.length)])
   for (let index = characters.length - 1; index > 0; index--) {
     const target = randomIndex(index + 1)
     ;[characters[index], characters[target]] = [characters[target], characters[index]]
@@ -269,12 +294,23 @@ function Login({ onLogin, notice = '' }: { onLogin: (session: Session) => void; 
     if (Object.keys(nextErrors).length > 0) return
     setBusy(true)
     try {
-      const body = new URLSearchParams({ username: normalizedUsername, password })
-      await request<void>('/api/auth/login', {
+      const login = () => request<void>('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body,
+        body: new URLSearchParams({ username: normalizedUsername, password }),
       })
+      if (!csrf) {
+        const current = await request<Session>('/api/auth/session')
+        csrf = current
+      }
+      try {
+        await login()
+      } catch (reason) {
+        if ((reason as Error & { status?: number }).status !== 403) throw reason
+        const refreshed = await request<Session>('/api/auth/session')
+        csrf = refreshed
+        await login()
+      }
       const next = await request<Session>('/api/auth/session')
       csrf = next
       onLogin(next)
@@ -422,10 +458,17 @@ function PasswordChange({
   const [confirmation, setConfirmation] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showConfirmation, setShowConfirmation] = useState(false)
 
   async function submit(event: React.FormEvent) {
     event.preventDefault()
     setError('')
+    if (!NEW_PASSWORD_PATTERN.test(newPassword)) {
+      setError('新しいパスワードは8～15文字の半角英数字で入力してください。')
+      return
+    }
     if (newPassword !== confirmation) {
       setError('新しいパスワードと確認用の入力が一致しません。')
       return
@@ -449,26 +492,36 @@ function PasswordChange({
   return (
     <main className="password-page">
       <section className="password-panel" aria-labelledby="password-title">
-        <p className="eyebrow">{expired ? 'パスワード有効期限' : forced ? '初回ログイン' : 'SECURITY'}</p>
+        {(expired || forced) && <p className="eyebrow">{expired ? 'パスワード有効期限' : '初回ログイン'}</p>}
         <h1 id="password-title">パスワード変更</h1>
-        <p className="muted">
+        {(expired || forced) && <p className="muted">
           {expired
             ? 'パスワードの有効期限が切れています。新しいパスワードへ変更するまで勤怠データにはアクセスできません。'
-            : forced
-            ? '管理者が発行した仮パスワードを、ご本人だけが知るパスワードへ変更してください。変更するまで勤怠データにはアクセスできません。'
-            : '現在のパスワードを確認してから、新しいパスワードへ更新します。'}
-        </p>
+            : '管理者が発行した仮パスワードを、ご本人だけが知るパスワードへ変更してください。変更するまで勤怠データにはアクセスできません。'}
+        </p>}
         <form onSubmit={submit}>
-          <label>現在のパスワード
-            <input type="password" autoComplete="current-password" required maxLength={128} value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
-          </label>
-          <label>新しいパスワード
-            <input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
-          </label>
-          <label>新しいパスワード（確認）
-            <input type="password" autoComplete="new-password" required minLength={12} maxLength={128} value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
-          </label>
-          <p className="password-hint">12文字以上。長いパスフレーズを推奨します。ユーザー名や推測されやすい文字列は使用できません。</p>
+          <div className="password-form-field">
+            <label htmlFor="current-password">現在のパスワード</label>
+            <span className="password-visibility-field">
+              <input id="current-password" type={showCurrentPassword ? 'text' : 'password'} autoComplete="current-password" required maxLength={128} value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} />
+              <button type="button" aria-label={showCurrentPassword ? '現在のパスワードを隠す' : '現在のパスワードを表示'} aria-pressed={showCurrentPassword} onClick={() => setShowCurrentPassword((current) => !current)}>👁</button>
+            </span>
+          </div>
+          <div className="password-form-field">
+            <label htmlFor="new-password">新しいパスワード</label>
+            <span className="password-visibility-field">
+              <input id="new-password" type={showNewPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={15} pattern="[A-Za-z0-9]{8,15}" title="8～15文字の半角英数字" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <button type="button" aria-label={showNewPassword ? '新しいパスワードを隠す' : '新しいパスワードを表示'} aria-pressed={showNewPassword} onClick={() => setShowNewPassword((current) => !current)}>👁</button>
+            </span>
+          </div>
+          <div className="password-form-field">
+            <label htmlFor="password-confirmation">新しいパスワード（確認）</label>
+            <span className="password-visibility-field">
+              <input id="password-confirmation" type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" required minLength={8} maxLength={15} pattern="[A-Za-z0-9]{8,15}" title="8～15文字の半角英数字" value={confirmation} onChange={(event) => setConfirmation(event.target.value)} />
+              <button type="button" aria-label={showConfirmation ? '確認用パスワードを隠す' : '確認用パスワードを表示'} aria-pressed={showConfirmation} onClick={() => setShowConfirmation((current) => !current)}>👁</button>
+            </span>
+          </div>
+          <p className="password-hint">8～15文字の半角英数字で入力してください。推測されやすいパスワードは使用できません。</p>
           {error && <p className="error-message" role="alert">{error}</p>}
           <div className="form-actions">
             {!forced && onCancel && <button type="button" className="secondary-button" onClick={onCancel}>キャンセル</button>}
@@ -634,7 +687,15 @@ function Initializer({ employee, year, month, apiBase, onCreated }: { employee: 
 
 type AdminSection = 'users' | 'excel' | 'calendar' | 'recovery'
 
-function AdminMenu({ onSelect }: { onSelect: (section: AdminSection) => void }) {
+function AdminMenu({
+  onSelect,
+  onAttendanceNew,
+  onAttendanceHistory,
+}: {
+  onSelect: (section: AdminSection) => void
+  onAttendanceNew: () => void
+  onAttendanceHistory: () => void
+}) {
   const items: Array<{ section: AdminSection; number: string; title: string; description: string }> = [
     { section: 'users', number: '01', title: '利用者管理', description: '社員検索・新規登録・仮パスワード再発行' },
     { section: 'excel', number: '02', title: 'Excel勤務表取込', description: '過去の勤務表を社員ごとにDBへ登録' },
@@ -658,6 +719,18 @@ function AdminMenu({ onSelect }: { onSelect: (section: AdminSection) => void }) 
             <span className="choice-arrow">→</span>
           </button>
         ))}
+        <button className="work-choice admin-menu-choice attendance-admin-choice" onClick={onAttendanceNew}>
+          <span className="choice-number">05</span>
+          <strong>勤務表の新規作成</strong>
+          <small>一般・役職者の新しい月の勤務表を作成</small>
+          <span className="choice-arrow">→</span>
+        </button>
+        <button className="work-choice admin-menu-choice attendance-admin-choice" onClick={onAttendanceHistory}>
+          <span className="choice-number">06</span>
+          <strong>勤務表の参照・編集</strong>
+          <small>一般・役職者の登録済み勤務表を確認</small>
+          <span className="choice-arrow">→</span>
+        </button>
       </div>
     </section>
   )
@@ -687,6 +760,8 @@ function AdminPanel({
   const [excelResult, setExcelResult] = useState<ExcelImportResult | null>(null)
   const [recoveryRequests, setRecoveryRequests] = useState<PendingRecovery[]>([])
   const [issuedCredential, setIssuedCredential] = useState<{ username: string; password: string } | null>(null)
+  const [credentialOutlookBusy, setCredentialOutlookBusy] = useState(false)
+  const [userView, setUserView] = useState<'menu' | 'create' | 'list'>('menu')
   const [form, setForm] = useState({
     username: '', password: '', accessRole: 'USER' as EmployeeAccount['accessRole'],
     department: '', displayName: '', positionName: '', employeeCode: '',
@@ -820,6 +895,27 @@ function AdminPanel({
     } catch (reason) { setError(reason instanceof Error ? reason.message : 'パスワードを変更できませんでした。') }
   }
 
+  async function openCredentialOutlook() {
+    if (!issuedCredential) return
+    setCredentialOutlookBusy(true); setError(''); setNotice('')
+    try {
+      const draft = await request<{ token: string }>(
+        `/api/admin/employees/${encodeURIComponent(issuedCredential.username)}/credential-outlook-draft`,
+        {
+          method: 'POST',
+          body: JSON.stringify({ password: issuedCredential.password }),
+        },
+      )
+      const downloadUrl = `${window.location.origin}/api/credential-outlook-drafts/${encodeURIComponent(draft.token)}.eml`
+      window.location.href = `query-attendance-outlook:${encodeURIComponent(downloadUrl)}`
+      setNotice('仮パスワードだけを記載したOutlook下書きを開いています。宛先を確認し、Outlookの「暗号化」を有効にして送信してください。')
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : 'Outlook下書きを作成できませんでした。')
+    } finally {
+      setCredentialOutlookBusy(false)
+    }
+  }
+
   const sectionDetails: Record<AdminSection, { title: string; description: string }> = {
     users: { title: '利用者管理', description: '社員の検索・登録・アカウント状態を管理します。' },
     excel: { title: 'Excel勤務表取込', description: '過去の勤務表を選択した社員のデータとして登録します。' },
@@ -838,7 +934,15 @@ function AdminPanel({
       {issuedCredential && (section === 'users' || section === 'recovery') && <aside className="credential-box" aria-live="polite">
         <div><strong>仮ログイン情報（一度だけ表示）</strong><button type="button" onClick={() => setIssuedCredential(null)}>表示を閉じる</button></div>
         <dl><dt>ユーザー名</dt><dd>{issuedCredential.username}</dd><dt>仮パスワード</dt><dd><code>{issuedCredential.password}</code></dd></dl>
-        <p>チャットや平文メールへの貼り付けは避け、本人確認後に安全な経路で伝えてください。</p>
+        <div className="credential-delivery">
+          <button className="credential-outlook-button" type="button" disabled={credentialOutlookBusy} onClick={() => void openCredentialOutlook()}>
+            <OutlookIcon />{credentialOutlookBusy ? '下書き作成中…' : 'Outlookの安全な下書きを開く'}
+          </button>
+          <p>
+            メールには仮パスワードだけを記載します。ユーザーIDは別の連絡手段で伝え、
+            Outlookの「暗号化」を有効にしてから本人確認済みの宛先へ送信してください。
+          </p>
+        </div>
       </aside>}
       {section === 'recovery' && <article className="admin-card featured-admin-card">
         <div className="card-heading">
@@ -856,6 +960,15 @@ function AdminPanel({
               </div>
             </div>)}
           </div>}
+        <div className="password-reset-explanation">
+          <strong>仮パスワード再発行後の処理</strong>
+          <ol>
+            <li>以前のパスワードは直ちに使用できなくなります。</li>
+            <li>ログイン失敗回数と一時ロックを解除し、再発行依頼を処理済みにします。</li>
+            <li>本人は仮パスワードでログイン後、新しいパスワードへ変更します。</li>
+            <li>無効化中のアカウントは再発行しても有効になりません。管理者が別途「有効化」する必要があります。</li>
+          </ol>
+        </div>
       </article>}
       {section === 'excel' && <article className="admin-card featured-admin-card">
         <div className="card-heading">
@@ -873,10 +986,10 @@ function AdminPanel({
           <label>勤務表Excel
             <input type="file" accept=".xlsx,.xlsm,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel.sheet.macroEnabled.12" onChange={(event) => setExcelFile(event.target.files?.[0] ?? null)} required />
           </label>
-          <label>Excelパスワード
+          <label>Excelパスワード（必要な場合のみ）
             <input type="password" maxLength={128} value={excelPassword} onChange={(event) => setExcelPassword(event.target.value)} placeholder="パスワードなしの場合は空欄" />
           </label>
-          <button className="primary-button" type="submit" disabled={excelBusy}>{excelBusy ? '解析・登録中…' : 'Excelを解析して登録'}</button>
+          <button className="primary-button" type="submit" disabled={excelBusy}>{excelBusy ? '取込中…' : 'Excel取込'}</button>
         </form>
         {excelResult && <div className="import-result">
           <strong>{excelResult.year}年{String(excelResult.month).padStart(2, '0')}月・{excelResult.importedRows}日</strong>
@@ -896,13 +1009,33 @@ function AdminPanel({
           <ul>{calendarResult.holidays.map((holiday) => <li key={holiday.date}>{holiday.date}　{holiday.name}</li>)}</ul>
         </div>}
       </article>}
-      {section === 'users' && <article className="admin-card">
+      {section === 'users' && userView === 'menu' && <article className="admin-card user-management-menu">
+        <div className="card-heading">
+          <div><p className="eyebrow">利用者管理</p><h2>行う操作を選択してください</h2></div>
+        </div>
+        <div className="user-management-choices">
+          <button type="button" onClick={() => setUserView('create')}>
+            <span>01</span>
+            <strong>新しい利用者</strong>
+            <small>社員情報と初期ログイン情報を登録します。</small>
+          </button>
+          <button type="button" onClick={() => setUserView('list')}>
+            <span>02</span>
+            <strong>登録済み利用者</strong>
+            <small>検索、仮パスワード再発行、有効・無効を管理します。</small>
+          </button>
+        </div>
+      </article>}
+      {section === 'users' && userView !== 'menu' && <button className="admin-subpage-back" type="button" onClick={() => { setUserView('menu'); setError(''); setNotice('') }}>
+        ← 利用者管理の選択へ戻る
+      </button>}
+      {section === 'users' && userView === 'create' && <article className="admin-card">
         <h2>新しい利用者</h2>
         <form className="account-form" onSubmit={create}>
           <label>ユーザー名<input value={form.username} pattern="[a-z0-9._-]{3,50}" required onChange={(event) => setForm({ ...form, username: event.target.value })} /></label>
           <label>初期パスワード
             <span className="password-input-row">
-              <input type="text" autoComplete="off" minLength={12} maxLength={128} required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+              <input type="text" autoComplete="off" minLength={8} maxLength={15} pattern="[A-Za-z0-9]{8,15}" title="8～15文字の半角英数字" required value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
               <button type="button" onClick={() => setForm({ ...form, password: generateStrongPassword() })}>自動生成</button>
             </span>
           </label>
@@ -925,8 +1058,11 @@ function AdminPanel({
           <button className="primary-button" type="submit">利用者を作成</button>
         </form>
       </article>}
-      {section === 'users' && <article className="admin-card">
+      {section === 'users' && userView === 'list' && <article className="admin-card">
         <div className="card-heading"><h2>登録済み利用者</h2><span>{visibleAccounts.length}件表示</span></div>
+        <p className="account-status-help">
+          「本人変更待ち」は、管理者が発行した仮パスワードのままで、本人による新しいパスワードへの変更がまだ完了していない状態です。
+        </p>
         <form className="account-search" onSubmit={(event) => event.preventDefault()}>
           <label>社員検索
             <span className="predictive-search">
@@ -958,7 +1094,7 @@ function AdminPanel({
               {account.enabled ? '有効' : '無効'}・{account.accessRole === 'ADMIN' ? '管理者' : account.accessRole === 'MANAGER' ? '役職者' : '一般'}
             </span>
             <div className="account-actions">
-              {account.mustChangePassword && <span className="password-change-pending">初回変更待ち</span>}
+              {account.mustChangePassword && <span className="password-change-pending">本人変更待ち</span>}
               <button onClick={() => resetPassword(account)}>仮パスワード再発行</button>
               <button disabled={account.username === currentUsername} onClick={() => toggle(account)}>{account.enabled ? '無効化' : '有効化'}</button>
             </div>
@@ -1284,7 +1420,8 @@ function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase
   const totalSystemDays = value.totals.systemTotals.reduce((sum, total) => sum + total.days, 0)
   const totalSystemMinutes = value.totals.systemTotals.reduce((sum, total) => sum + total.minutes, 0)
   return (
-    <section className="excel-sheet" aria-label={`${value.year}年${value.month}月 勤務表`}>
+    <div className="timesheet-layout">
+      <section className="excel-sheet" aria-label={`${value.year}年${value.month}月 勤務表`}>
       <section className="sheet-heading">
         <h1><span>勤</span><span>務</span><span>表</span><small>（{value.employee.workScheduleType.replace('（8時間）', '')}）</small></h1>
         <strong>{value.year}年{String(value.month).padStart(2, '0')}月分</strong>
@@ -1365,7 +1502,51 @@ function TimesheetView({ value, apiBase, onChange }: { value: Timesheet; apiBase
           </div>
         </article>
       </section>
-    </section>
+      </section>
+      <TimesheetGuidance />
+    </div>
+  )
+}
+
+function TimesheetGuidance() {
+  return (
+    <aside className="timesheet-guidance" aria-label="勤務表の入力・運用説明">
+      <h2>勤務表 memo</h2>
+      <section>
+        <h3>休暇・健康診断</h3>
+        <dl>
+          <dt>有給休暇・特別休暇・慶弔休暇</dt>
+          <dd>休暇種別から選択すると、所定時間分の勤怠を自動計上します（8時間勤務は8時間、7時間勤務は7時間、6時間勤務は6時間）。</dd>
+          <dt>AM半休・PM半休</dt>
+          <dd>所定時間の半分を休暇として自動計上します（8時間勤務は4時間、7時間勤務は3.5時間、6時間勤務は3時間）。</dd>
+          <dt>健康診断</dt>
+          <dd>業務内容へ「AM健康診断」または「PM健康診断」と記載してください。所定時間の半分を自動計上します。</dd>
+        </dl>
+      </section>
+      <section>
+        <h3>36協定</h3>
+        <p>時間外労働の上限は、原則として1日8時間・1か月45時間・1年360時間です。</p>
+        <p>特別条項は年6回を限度とし、1か月60時間・1年630時間です。</p>
+      </section>
+      <section>
+        <h3>振替休日・振替出勤</h3>
+        <ul>
+          <li>同月内で振り替える場合は、休む日に「振替休日」を選択し、業務内容へ何日の振替か記載してください。</li>
+          <li>休日出勤日は通常の業務内容とシステムNo.を入力してください。</li>
+          <li>翌月へ振り替える場合は、休日出勤日の業務内容へ「振替出勤（何月何日に振替予定）」、休む日へ「何月何日の振替休日」と記載してください。</li>
+          <li>夏季休暇を同じ8月内で振り替える場合は、会社休日を変更せず「振替休日」で処理してください。月をまたぐ場合は事前に上長と総務へ相談してください。</li>
+        </ul>
+      </section>
+      <section>
+        <h3>慶弔休暇・休憩</h3>
+        <p>慶弔休暇の日数は、本人結婚5日、配偶者の出産1日、実父母・配偶者・子の死亡5日、実祖父母・実兄弟姉妹・配偶者の父母の死亡2日です。取得時は上長へ報告してください。</p>
+        <p>1日6時間を超える勤務には休憩が必要です。半休を除き、勤務日は1時間の休憩を取得してください。</p>
+      </section>
+      <section>
+        <h3>WG参加可否</h3>
+        <p>通常月はWGへの参加可否です。12月分だけは忘年会への参加可否として回答してください。</p>
+      </section>
+    </aside>
   )
 }
 
@@ -1389,16 +1570,16 @@ function WorkspaceHome({
         <h1>{employee.displayName}さん　お疲れ様です。</h1>
       </div>
       <div className="work-choice-grid">
-        <button className="work-choice primary-choice" onClick={onNew}>
+        {!isAdmin && <button className="work-choice primary-choice" onClick={onNew}>
           <span className="choice-number">01</span>
           <strong>新規で勤務表を作成</strong>
           <span className="choice-arrow">→</span>
-        </button>
-        <button className="work-choice" onClick={onHistory}>
+        </button>}
+        {!isAdmin && <button className="work-choice" onClick={onHistory}>
           <span className="choice-number">02</span>
           <strong>過去分を参照・編集</strong>
           <span className="choice-arrow">→</span>
-        </button>
+        </button>}
         {isAdmin && <button className="work-choice admin-choice" onClick={onAdmin}>
           <span className="choice-number">ADMIN</span>
           <strong>管理者メニュー</strong>
@@ -1407,6 +1588,29 @@ function WorkspaceHome({
         </button>}
       </div>
     </section>
+  )
+}
+
+function ScrollToTopButton() {
+  const [visible, setVisible] = useState(false)
+
+  useEffect(() => {
+    const updateVisibility = () => setVisible(window.scrollY >= 500)
+    window.addEventListener('scroll', updateVisibility, { passive: true })
+    updateVisibility()
+    return () => window.removeEventListener('scroll', updateVisibility)
+  }, [])
+
+  if (!visible) return null
+  return (
+    <button
+      className="scroll-to-top"
+      type="button"
+      aria-label="ページ最上部へ戻る"
+      onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+    >
+      ↑<span>最上部へ</span>
+    </button>
   )
 }
 
@@ -1434,16 +1638,19 @@ function App() {
   const isAdmin = session?.roles.includes('ROLE_ADMIN') ?? false
   const isManager = session?.roles.includes('ROLE_MANAGER') ?? false
   const canEditOthers = isAdmin || isManager
+  const attendanceEmployees = isAdmin
+    ? editableEmployees.filter((account) => account.username !== session?.username)
+    : editableEmployees
   // Spring Securityが付与する認証要素（FACTOR_PASSWORD等）は画面権限ではない。
-  // ブルーテーマは業務権限が役職者または管理者の場合だけ適用する。
-  const hasElevatedRole = isManager || isAdmin
+  // 管理者だけをブルーテーマとし、一般・役職者は黒基調のグラデーションを使用する。
+  const hasElevatedRole = isAdmin
   const targetUsername = selectedUsername || session?.username || ''
   const targetEmployee = targetUsername === session?.username
     ? employee
-    : editableEmployees.find((account) => account.username === targetUsername) ?? null
+    : attendanceEmployees.find((account) => account.username === targetUsername) ?? null
   const normalizedEmployeeSearch = employeeSearch.trim().toLocaleLowerCase('ja-JP')
   const employeeSuggestions = normalizedEmployeeSearch
-    ? editableEmployees.filter((account) => [
+    ? attendanceEmployees.filter((account) => [
       account.displayName,
       account.employeeCode,
       account.department,
@@ -1487,6 +1694,17 @@ function App() {
   }, [])
 
   useEffect(() => {
+    const handleSessionExpired = () => {
+      returnToLogin(
+        anonymousSession(),
+        '認証の有効期限が切れました。再度ログインしてください。',
+      )
+    }
+    window.addEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+    return () => window.removeEventListener(SESSION_EXPIRED_EVENT, handleSessionExpired)
+  }, [returnToLogin])
+
+  useEffect(() => {
     request<Session>('/api/auth/session').then((value) => {
       csrf = value
       setSession(value)
@@ -1507,18 +1725,7 @@ function App() {
       } catch {
         // サーバー側で先にセッションが失効していても、画面は必ずログインへ戻す。
       }
-      const next = await request<Session>('/api/auth/session').catch(() => ({
-        authenticated: false,
-        username: '',
-        roles: [],
-        mustChangePassword: false,
-        passwordExpired: false,
-        passwordExpiryWarning: false,
-        passwordExpiryDaysRemaining: null,
-        passwordExpiresAt: null,
-        csrfToken: '',
-        csrfHeaderName: 'X-XSRF-TOKEN',
-      }))
+      const next = await request<Session>('/api/auth/session').catch(anonymousSession)
       returnToLogin(next, '30分間操作がなかったためログアウトしました。再ログインしてください。')
     }
 
@@ -1615,6 +1822,39 @@ function App() {
     setError('')
   }
 
+  function goBack() {
+    if (screen === 'admin-menu') {
+      setScreen('home')
+    } else if (screen.startsWith('admin')) {
+      setScreen('admin-menu')
+    } else if (screen === 'new' || screen === 'history') {
+      setScreen(isAdmin ? 'admin-menu' : 'home')
+    } else {
+      setScreen('home')
+    }
+    setError('')
+    setImportNotice(null)
+    setDeleteTarget(null)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  function openAdminTimesheet(nextScreen: 'new' | 'history') {
+    const firstEmployee = attendanceEmployees[0]
+    if (!firstEmployee) {
+      setError('勤務表を管理できる一般・役職者が登録されていません。')
+      return
+    }
+    setSelectedUsername(firstEmployee.username)
+    setEmployeeSearch('')
+    setYear(today.getFullYear())
+    setMonth(today.getMonth() + 1)
+    setTimesheet(null)
+    setNotFound(nextScreen === 'new')
+    setHistory([])
+    setError('')
+    setScreen(nextScreen)
+  }
+
   function moveMonth(offset: number) {
     const next = new Date(year, month - 1 + offset, 1)
     setYear(next.getFullYear())
@@ -1652,30 +1892,37 @@ function App() {
   if (screen === 'password') return <PasswordChange forced={false} onChanged={(next) => { setSession(next); setScreen('home') }} onCancel={() => setScreen('home')} />
 
   return (
-    <div className={`app-shell ${hasElevatedRole ? 'privileged-theme' : ''}`}>
+    <div className={`app-shell ${hasElevatedRole ? 'privileged-theme' : ''} ${(screen === 'new' || screen === 'history') && timesheet ? 'timesheet-print-screen' : 'non-print-screen'}`}>
       <header className="app-header">
         <div className="header-brand">
           <img className="company-logo" src="/query-logo-header.png" alt="株式会社クエリ" />
           <strong>勤怠管理システム</strong>
         </div>
-        <div className={`current-user ${hasElevatedRole ? 'elevated-current-user' : ''}`}>
-          <strong>{employee.displayName}</strong>
-          <small>{employee.department || '所属部署未設定'}</small>
+        <div className="header-actions">
+          {screen !== 'home' && <button className="header-back-button" type="button" onClick={goBack}><span aria-hidden="true">←</span>戻る</button>}
+          <div className={`current-user ${hasElevatedRole ? 'elevated-current-user' : ''}`}>
+            <strong>{employee.displayName}</strong>
+            <small>{employee.department || '所属部署未設定'}</small>
+          </div>
         </div>
       </header>
       <div className="app-body">
         <aside className="app-sidebar">
           <nav className="side-nav" aria-label="メインメニュー">
-            <button className={screen === 'home' ? 'active' : ''} onClick={() => { setScreen('home'); setError('') }}><span>⌂</span>ホーム</button>
+            <button className={screen === 'home' ? 'active' : ''} onClick={() => { setScreen('home'); setError('') }}><span aria-hidden="true">🏠</span>ホーム</button>
             {isAdmin && <button className={`admin-nav-button ${screen.startsWith('admin') ? 'active' : ''}`} onClick={() => { setScreen('admin-menu'); setError('') }}><span>◆</span>管理者メニュー</button>}
-            <button onClick={() => { setScreen('password'); setError('') }}><span>●</span>パスワード変更</button>
-            {(screen === 'new' || screen === 'history') && <button onClick={() => window.print()}><span>▣</span>印刷</button>}
-            <button onClick={logout}><span>↪</span>ログアウト</button>
+            <button onClick={() => { setScreen('password'); setError('') }}><span aria-hidden="true">🔑</span>パスワード変更</button>
+            {(screen === 'new' || screen === 'history') && timesheet && <button onClick={() => window.print()}><span aria-hidden="true">📄</span>印刷</button>}
+            <button onClick={logout}><span aria-hidden="true">🚪</span>ログアウト</button>
           </nav>
           {(screen === 'new' || screen === 'history') && timesheet && targetUsername === session.username
             && <SidebarCommunication key={`${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} />}
         </aside>
         <main className="content">
+        {(screen === 'new' || screen === 'history') && timesheet && targetUsername === session.username
+          && <div className="mobile-communication">
+            <SidebarCommunication key={`mobile:${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} />
+          </div>}
         {screen === 'home' && <WorkspaceHome
           employee={employee}
           isAdmin={isAdmin}
@@ -1700,7 +1947,11 @@ function App() {
           }}
           onAdmin={() => { setScreen('admin-menu'); setError('') }}
         />}
-        {screen === 'admin-menu' && <AdminMenu onSelect={openAdminSection} />}
+        {screen === 'admin-menu' && <AdminMenu
+          onSelect={openAdminSection}
+          onAttendanceNew={() => openAdminTimesheet('new')}
+          onAttendanceHistory={() => openAdminTimesheet('history')}
+        />}
         {screen === 'admin-users' && <AdminPanel currentUsername={session.username} section="users" onBack={() => setScreen('admin-menu')} />}
         {screen === 'admin-excel' && <AdminPanel currentUsername={session.username} section="excel" onBack={() => setScreen('admin-menu')} />}
         {screen === 'admin-calendar' && <AdminPanel currentUsername={session.username} section="calendar" onBack={() => setScreen('admin-menu')} />}
@@ -1731,7 +1982,7 @@ function App() {
                 </span>}
               </div>
               <select aria-label="社員選択" value={targetUsername} onChange={(event) => selectEmployee(event.target.value)}>
-                {editableEmployees.map((account) => <option key={account.username} value={account.username}>{account.displayName}（{account.employeeCode}）</option>)}
+                {attendanceEmployees.map((account) => <option key={account.username} value={account.username}>{account.displayName}（{account.employeeCode}）</option>)}
               </select>
             </label>}
             {screen === 'new' && <button onClick={() => moveMonth(-1)}>◀ 前月</button>}
@@ -1760,7 +2011,8 @@ function App() {
           </div>}
           {targetUsername !== session.username && <p className="delegated-edit-note">{isAdmin ? '管理者' : '役職者'}権限で <strong>{targetEmployee?.displayName}</strong> さんの勤務表を参照・編集しています。操作は監査ログに記録されます。</p>}
           {notFound && screen === 'history' && <section className="empty-state"><h2>勤務表がありません</h2><p className="muted">「過去の勤怠」から登録済みの月を選択してください。</p></section>}
-          {notFound && screen === 'new' && targetEmployee && <Initializer employee={targetEmployee} year={year} month={month} apiBase={timesheetApiBase} onCreated={(value) => { setTimesheet(value); setNotFound(false); rememberMonth(value) }} />}
+          {notFound && screen === 'new' && targetEmployee && (!isAdmin || targetUsername !== session.username)
+            && <Initializer employee={targetEmployee} year={year} month={month} apiBase={timesheetApiBase} onCreated={(value) => { setTimesheet(value); setNotFound(false); rememberMonth(value) }} />}
           {timesheet && <TimesheetView key={`${timesheet.id}:${timesheet.year}:${timesheet.month}`} value={timesheet} apiBase={timesheetApiBase} onChange={setTimesheet} />}
         </>}
         </main>
@@ -1790,6 +2042,7 @@ function App() {
           setScreen('home')
         }}
       />}
+      <ScrollToTopButton />
     </div>
   )
 }

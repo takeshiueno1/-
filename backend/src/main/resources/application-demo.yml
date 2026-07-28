@@ -1,0 +1,25 @@
+spring:
+  datasource:
+    url: jdbc:h2:file:./data/attendance-demo;MODE=PostgreSQL;DATABASE_TO_LOWER=TRUE;DEFAULT_NULL_ORDERING=HIGH
+    username: sa
+    password:
+    driver-class-name: org.h2.Driver
+  flyway:
+    locations: classpath:db/demo
+server:
+  address: ${SERVER_ADDRESS:127.0.0.1}
+  port: 4280
+  servlet:
+    session:
+      cookie:
+        secure: false
+app:
+  security:
+    csrf-enabled: false
+  demo:
+    seed-enabled: ${APP_DEMO_SEED_ENABLED:false}
+    seed-count: ${APP_DEMO_SEED_COUNT:50}
+    seed-months: ${APP_DEMO_SEED_MONTHS:2}
+logging:
+  file:
+    name: ./logs/attendance-demo.log

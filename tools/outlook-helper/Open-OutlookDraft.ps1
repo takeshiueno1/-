@@ -12,10 +12,11 @@ if (-not $LaunchUri.StartsWith($scheme, [StringComparison]::OrdinalIgnoreCase)) 
 
 $downloadUrl = [Uri]::UnescapeDataString($LaunchUri.Substring($scheme.Length))
 $uri = [Uri]$downloadUrl
-if ($uri.Scheme -ne 'http' -or
+if (($uri.Scheme -ne 'http' -and $uri.Scheme -ne 'https') -or
     -not $uri.IsLoopback -or
-    $uri.Port -ne 4173 -or
-    -not $uri.AbsolutePath.StartsWith('/api/outlook-drafts/', [StringComparison]::Ordinal) -or
+    $uri.Port -lt 1024 -or
+    ($uri.AbsolutePath.StartsWith('/api/outlook-drafts/', [StringComparison]::Ordinal) -eq $false -and
+     $uri.AbsolutePath.StartsWith('/api/credential-outlook-drafts/', [StringComparison]::Ordinal) -eq $false) -or
     -not $uri.AbsolutePath.EndsWith('.eml', [StringComparison]::OrdinalIgnoreCase)) {
     exit 3
 }

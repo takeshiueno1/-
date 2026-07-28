@@ -14,16 +14,12 @@ public class PasswordPolicy {
             "123456789012", "queryinsight", "attendance");
 
     public void validate(String password, String username) {
-        if (password == null || password.length() < 12 || password.length() > 128) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "パスワードは12～128文字で入力してください。");
+        if (password == null || !password.matches("[A-Za-z0-9]{8,15}")) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "パスワードは8～15文字の半角英数字で入力してください。");
         }
         String normalized = password.toLowerCase(Locale.ROOT);
         if (BLOCKED_PASSWORDS.contains(normalized)) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "推測されやすいパスワードは使用できません。");
-        }
-        if (username != null && username.length() >= 3
-                && normalized.contains(username.toLowerCase(Locale.ROOT))) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ユーザー名を含むパスワードは使用できません。");
         }
     }
 }

@@ -7,6 +7,7 @@ import java.util.Locale;
 import jp.co.query.attendance.common.AuditLogRepository;
 import jp.co.query.attendance.auth.AccessRole;
 import jp.co.query.attendance.auth.PasswordPolicy;
+import jp.co.query.attendance.integration.CredentialOutlookDraftService;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.jdbc.core.simple.JdbcClient;
@@ -54,18 +55,21 @@ public class AdminEmployeeService {
     private final PasswordEncoder passwordEncoder;
     private final AuditLogRepository auditLogs;
     private final PasswordPolicy passwordPolicy;
+    private final CredentialOutlookDraftService credentialDrafts;
 
     public AdminEmployeeService(
             JdbcClient jdbc,
             JdbcUserDetailsManager users,
             PasswordEncoder passwordEncoder,
             AuditLogRepository auditLogs,
-            PasswordPolicy passwordPolicy) {
+            PasswordPolicy passwordPolicy,
+            CredentialOutlookDraftService credentialDrafts) {
         this.jdbc = jdbc;
         this.users = users;
         this.passwordEncoder = passwordEncoder;
         this.auditLogs = auditLogs;
         this.passwordPolicy = passwordPolicy;
+        this.credentialDrafts = credentialDrafts;
     }
 
     @Transactional(readOnly = true)
@@ -225,6 +229,46 @@ public class AdminEmployeeService {
                 .update();
         auditLogs.record(actor, "PASSWORD_RESET", "USER", username, "");
     }
+
+    @Transactional(readOnly = true)
+    public CredentialOutlookDraftService.DraftToken createCredentialOutlookDraft(
+            String actor,
+            String targetUsername,
+            String temporaryPassword) {
+        String username = normalizeUsername(targetUsername);
+        var account = jdbc.sql("""
+                        SELECT u.password, u.enabled, e.display_name
+                          FROM users u
+                          JOIN employees e ON e.username = u.username
+                         WHERE u.username = :username
+                        """)
+                .param("username", username)
+                .query((rs, rowNum) -> new CredentialDraftAccount(
+                        rs.getString("password"),
+                        rs.getBoolean("enabled"),
+                        rs.getString("display_name")))
+                .optional()
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "利用者が見つかりません。"));
+        if (!account.enabled()) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "この利用者は無効です。有効化してから仮パスワードを送信してください。");
+        }
+        if (temporaryPassword == null
+                || temporaryPassword.length() > 128
+                || !passwordEncoder.matches(temporaryPassword, account.passwordHash())) {
+            throw new ResponseStatusException(
+                    HttpStatus.CONFLICT,
+                    "表示中の仮パスワードは現在の認証情報と一致しません。再発行してください。");
+        }
+        return credentialDrafts.create(
+                actor,
+                username,
+                account.displayName(),
+                temporaryPassword);
+    }
+
+    private record CredentialDraftAccount(String passwordHash, boolean enabled, String displayName) {}
 
     private EmployeeAccount findByUsername(String username) {
         return findAll().stream().filter(account -> account.username().equals(username)).findFirst()
