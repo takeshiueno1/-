@@ -5,6 +5,7 @@ frontend/dist/
 /outputs/
 /tmp/
 /dist/
+/.worktrees/
 *.log
 *.pid
 .idea/
