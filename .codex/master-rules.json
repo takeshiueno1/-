@@ -1,0 +1,7 @@
+{
+    "schemaVersion":  1,
+    "enabled":  true,
+    "masterRepository":  "takeshiueno1/codex-master-rules",
+    "projectRules":  ".codex/PROJECT_RULES.md",
+    "generatedFile":  "AGENTS.md"
+}
