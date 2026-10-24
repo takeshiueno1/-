@@ -1,11 +1,12 @@
 {
   "files": {
     "agents/harness-architect.toml": "f5ed1410bb45e4f19af72fc182e3d6354e4ff70e44ea4ae0c94c9f32eba4e1f8",
-    "agents/harness-explorer.toml": "5bd5389018e1e195022b33050a72257f803f3f3ce67f58556445faddb1aa150d",
+    "agents/harness-explorer.toml": "62756c88e6d1ca5005f0e21ca74c364b0549c9d17fa33d63917c4451c09d5452",
     "agents/harness-frontier.toml": "1dc7cfef83428229b706ea2464682f76d1e46612f73c2bd6a522b2714736d313",
     "agents/harness-reviewer.toml": "6d34825056b8357469f001013bcc06f82a2795126b6bdc413be6a86055710136",
     "agents/harness-worker.toml": "a0e79b055b92e22a351325f182b17e6e231ae429fd6cee2d51334db348e6af26",
-    "config.toml": "dcff1999fa318de1e13f46faf2b55e7c9be15ca2dcdbd34411f1008a67df9184"
+    "config.toml": "dcff1999fa318de1e13f46faf2b55e7c9be15ca2dcdbd34411f1008a67df9184",
+    "harness-contract.json": "d35f73debfb84ece65ffa015e8d73bbae3f2bc2497a6a0ce5b023642fc146889"
   },
   "schemaVersion": 1
 }
