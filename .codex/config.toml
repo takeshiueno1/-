@@ -1,0 +1,4 @@
+# Native Harness v2. Parent model, sandbox, approvals and connections stay inherited.
+# max_threads is the documented legacy alias on releases predating this key.
+[agents]
+max_concurrent_threads_per_session = 2
