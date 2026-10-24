@@ -1,0 +1,121 @@
+{
+  "schemaVersion": 3,
+  "harnessVersion": "3.0",
+  "masterRepository": "takeshiueno1/codex-master-rules",
+  "nativeFirst": true,
+  "maxConcurrentSubagents": 2,
+  "domains": {
+    "A": [
+      "W01",
+      "W02",
+      "W03",
+      "W04",
+      "W05",
+      "W06"
+    ],
+    "B": [
+      "M01",
+      "M02",
+      "M03",
+      "M04",
+      "M05"
+    ],
+    "C": [
+      "P01",
+      "P02",
+      "P03",
+      "P04",
+      "P05",
+      "P06",
+      "P07"
+    ],
+    "D": [
+      "D01",
+      "D02",
+      "D03",
+      "D04",
+      "D05",
+      "D06"
+    ],
+    "E": [
+      "E01",
+      "E02",
+      "E03",
+      "E04",
+      "E05"
+    ],
+    "F": [
+      "C01",
+      "C02",
+      "C03",
+      "C04",
+      "C05"
+    ],
+    "G": [
+      "G01",
+      "G02",
+      "G03",
+      "G04",
+      "G05"
+    ],
+    "H": [
+      "S01",
+      "S02",
+      "S03",
+      "S04",
+      "S05"
+    ],
+    "I": [
+      "I01",
+      "I02",
+      "I03",
+      "I04"
+    ]
+  },
+  "evidence": {
+    "missingValue": null,
+    "configuredIsEffective": false,
+    "rawPromptRetention": false,
+    "hiddenReasoningRetention": false,
+    "automaticStablePromotion": false,
+    "requireHeldOutExperienceEval": true,
+    "initialTasksPerCategory": 3,
+    "initialRepeatsPerVariant": 3,
+    "statisticalGuarantee": false
+  },
+  "context": {
+    "searchFirst": true,
+    "maxRelevantExperiences": 3,
+    "defaultExperienceMaxAgeDays": 30,
+    "resumeRequiredFacts": [
+      "goal",
+      "completionConditions",
+      "authority",
+      "incompleteWork",
+      "gitCommit",
+      "evidenceRefs"
+    ]
+  },
+  "connections": {
+    "layers": [
+      "user",
+      "project",
+      "managed",
+      "hosted"
+    ],
+    "retryAfterDiagnosisMax": 1,
+    "unapprovedCredentialRedirect": false,
+    "externalOutputGrantsAuthority": false
+  },
+  "runtime": {
+    "required": true,
+    "status": "UNVERIFIED"
+  },
+  "promotion": {
+    "requireQualityNonRegression": true,
+    "requireSecurityNonRegression": true,
+    "requireRequiredTestsPass": true,
+    "requireMeasuredGain": true,
+    "allowUnmeasuredExcellentRating": false
+  }
+}
