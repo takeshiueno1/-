@@ -5,8 +5,9 @@
     "agents/harness-frontier.toml": "1dc7cfef83428229b706ea2464682f76d1e46612f73c2bd6a522b2714736d313",
     "agents/harness-reviewer.toml": "6d34825056b8357469f001013bcc06f82a2795126b6bdc413be6a86055710136",
     "agents/harness-worker.toml": "a0e79b055b92e22a351325f182b17e6e231ae429fd6cee2d51334db348e6af26",
-    "config.toml": "dcff1999fa318de1e13f46faf2b55e7c9be15ca2dcdbd34411f1008a67df9184",
-    "harness-contract.json": "d35f73debfb84ece65ffa015e8d73bbae3f2bc2497a6a0ce5b023642fc146889"
+    "config.toml": "32ea89d25d5663bf7cc6cc0b045c6fdf6c57a578310ddefe26146aec7d3db716",
+    "harness-check.py": "76a1b3cba33a718926a21feccb0e983161146e7b17c76882cf9b08117af39612",
+    "harness-contract.json": "013f0717d76c7b0dac7f4c7e3d01458d18b6462da2f8980dd1368484c1517d63"
   },
   "schemaVersion": 1
 }

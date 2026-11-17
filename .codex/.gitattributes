@@ -1,0 +1,2 @@
+# Managed Harness text must retain identical bytes across Windows and Unix.
+* text eol=lf

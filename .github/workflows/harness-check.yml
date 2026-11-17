@@ -1,0 +1,34 @@
+name: harness-readiness
+
+on:
+  push:
+    paths:
+      - '.codex/**'
+      - 'AGENTS.md'
+      - '.github/workflows/harness-check.yml'
+  pull_request:
+    paths:
+      - '.codex/**'
+      - 'AGENTS.md'
+      - '.github/workflows/harness-check.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: harness-readiness-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static-distribution:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Verify managed hashes, generated rules and safety contracts
+        run: python .codex/harness-check.py . --static
