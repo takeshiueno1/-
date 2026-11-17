@@ -1,6 +1,6 @@
 {
   "schemaVersion": 3,
-  "harnessVersion": "3.0",
+  "harnessVersion": "3.1",
   "masterRepository": "takeshiueno1/codex-master-rules",
   "nativeFirst": true,
   "maxConcurrentSubagents": 2,
@@ -117,5 +117,14 @@
     "requireRequiredTestsPass": true,
     "requireMeasuredGain": true,
     "allowUnmeasuredExcellentRating": false
+  },
+  "verification": {
+    "command": "python .codex/harness-check.py .",
+    "staticOnlyFlag": "--static",
+    "sourceComparisonFlag": "--master",
+    "defaultExitWhenRuntimeUnverified": 2,
+    "staticPassProvesRuntime": false,
+    "staticPassProvesPerformanceGain": false,
+    "automaticModelOrPermissionChanges": false
   }
 }
