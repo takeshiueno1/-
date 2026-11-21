@@ -1,4 +1,4 @@
-<!-- CODEX_MASTER_RULES_BEGIN version=1.9.1 sha256=058d64cbc3b7d95828d2a04055cf616536ff487804b4dd3c8fcd64f7d59f275b -->
+<!-- CODEX_MASTER_RULES_BEGIN version=1.9.3 sha256=6600b12de6058f2e5f631eaba4ad2f18c58feb77adf02247616e2bb6e031bff1 -->
 # Codex マスタールール
 
 ## 作業契約
@@ -34,6 +34,8 @@
 - 独立レビュー、security、リリース判定が必要なときは `independent-assurance` を使う。
 - 承認は操作回数ではなく影響、不可逆性、権限、公開範囲、不確実性で判定する。低〜中リスクを不必要に停止させない。
 - セキュリティ確認では認証・認可、入力、秘密情報、外部公開、依存関係、注入、データ、ログをリスクに応じて確認する。結論は証跡に基づき、根拠のないPASSや完了宣言をしない。
+- **Security by default:** Web/API・認証/認可・秘密・入力・依存の変更時は、悪用経路→予防→検証→監視を必要範囲で確認。詳細は正本 `rules/SECURITY.md` を必要時参照。
+- **認証回避の禁止:** AI修正でも認証スキップ、固定資格情報、裏口、過剰CORS/権限を禁止。WAFのみで安全と判断しない。
 
 ## Leonardo Control Plane
 
